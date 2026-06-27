@@ -41,32 +41,32 @@ public class MainForm : Form
     {
         _initFolder = initFolder;
         Text = "吉星立绘 Mod 制作器";
-        Width = 1180; Height = 780;
+        Width = 1200; Height = 800;
+        MinimumSize = new Size(820, 560);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Bg;
         Font = Theme.UI(9f);
 
-        var topBar = new Panel { Dock = DockStyle.Top, Height = 52, BackColor = Theme.Bar };
-        var tools = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, BackColor = Theme.Bar, Padding = new Padding(10, 9, 0, 0) };
-        var btnGame = Theme.FlatButton("🎭  打开游戏目录");
-        btnGame.Click += (_, _) => OpenGameDir();
-        var btnFolder = Theme.FlatButton("📂  打开文件夹"); btnFolder.Margin = new Padding(8, 0, 0, 0);
-        btnFolder.Click += (_, _) => OpenFolder();
-        var btnExport = Theme.FlatButton("📦  导出图包"); btnExport.Margin = new Padding(8, 0, 0, 0);
-        btnExport.Click += (_, _) => ExportPack();
-        var btnImport = Theme.FlatButton("📥  导入图包"); btnImport.Margin = new Padding(8, 0, 0, 0);
-        btnImport.Click += (_, _) => ImportPack();
-        var btnRestore = Theme.FlatButton("↩  还原全部"); btnRestore.Margin = new Padding(8, 0, 0, 0);
-        btnRestore.Click += (_, _) => RestoreAll();
-        var btnMigrate = Theme.FlatButton("🔄  迁移旧mod"); btnMigrate.Margin = new Padding(8, 0, 0, 0);
-        btnMigrate.Click += (_, _) => MigrateOldMods();
-        var hint = new Label
+        // 顶栏: 自适应换行 (窄屏/高DPI 自动折到第二行, 不再挤压截断)
+        var topBar = new FlowLayoutPanel
         {
-            Text = "拖图替换 · Ctrl+滚轮缩放", AutoSize = true,
-            ForeColor = Theme.SubText, Font = Theme.UI(9f), Margin = new Padding(16, 17, 0, 0)
+            Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = true, BackColor = Theme.Bar, Padding = new Padding(8, 7, 8, 7),
+            MinimumSize = new Size(0, 50)
         };
-        tools.Controls.AddRange(new Control[] { btnGame, btnFolder, btnExport, btnImport, btnRestore, btnMigrate, hint });
-        topBar.Controls.Add(tools);
+        var btnGame = Theme.FlatButton("🎭 游戏目录"); btnGame.Margin = new Padding(3);
+        btnGame.Click += (_, _) => OpenGameDir();
+        var btnFolder = Theme.FlatButton("📂 文件夹"); btnFolder.Margin = new Padding(3);
+        btnFolder.Click += (_, _) => OpenFolder();
+        var btnExport = Theme.FlatButton("📦 导出"); btnExport.Margin = new Padding(3);
+        btnExport.Click += (_, _) => ExportPack();
+        var btnImport = Theme.FlatButton("📥 导入"); btnImport.Margin = new Padding(3);
+        btnImport.Click += (_, _) => ImportPack();
+        var btnRestore = Theme.FlatButton("↩ 还原"); btnRestore.Margin = new Padding(3);
+        btnRestore.Click += (_, _) => RestoreAll();
+        var btnMigrate = Theme.FlatButton("🔄 迁移旧mod"); btnMigrate.Margin = new Padding(3);
+        btnMigrate.Click += (_, _) => MigrateOldMods();
+        topBar.Controls.AddRange(new Control[] { btnGame, btnFolder, btnExport, btnImport, btnRestore, btnMigrate });
 
         var heroTitle = new Label
         {
@@ -362,6 +362,41 @@ public class MainForm : Form
             c.AllowDrop = true; c.DragEnter += DragEnter; c.DragLeave += DragLeave; c.DragDrop += DragDrop;
         }
 
+        // 拖出导出: 从格子往外拖（到桌面/文件夹）= 导出该图 PNG，与拖入对称
+        Point dragStart = Point.Empty; bool mayDrag = false;
+        void MDown(object s, MouseEventArgs e) { if (e.Button == MouseButtons.Left) { dragStart = e.Location; mayDrag = true; } }
+        void MUp(object s, MouseEventArgs e) => mayDrag = false;
+        void MMove(object s, MouseEventArgs e)
+        {
+            if (!mayDrag || e.Button != MouseButtons.Left) return;
+            if (Math.Abs(e.X - dragStart.X) < SystemInformation.DragSize.Width &&
+                Math.Abs(e.Y - dragStart.Y) < SystemInformation.DragSize.Height) return;
+            mayDrag = false;
+            try
+            {
+                string tmp = Path.Combine(Path.GetTempPath(), SafeFileName(tex.Name) + ".png");
+                File.WriteAllBytes(tmp, _engine.DecodePng(tex.BundlePath, tex.PathId, 0));
+                ((Control)s).DoDragDrop(new DataObject(DataFormats.FileDrop, new[] { tmp }), DragDropEffects.Copy);
+            }
+            catch (Exception ex) { _status.Text = "导出失败: " + ex.Message; }
+        }
+        foreach (Control c in new Control[] { card, pic, lbl })
+        {
+            c.MouseDown += MDown; c.MouseMove += MMove; c.MouseUp += MUp;
+        }
+
+        // 右键菜单: 裁切替换 / 导出这张图 / 定位 bundle 文件
+        var menu = new ContextMenuStrip();
+        menu.Items.Add("✂ 裁切替换…", null, (_, _) =>
+        {
+            using var dlg = new OpenFileDialog { Filter = "图片|*.png;*.jpg;*.jpeg;*.bmp;*.webp" };
+            if (dlg.ShowDialog() == DialogResult.OK) DoReplace(card, dlg.FileName, forceCrop: true);
+        });
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("📤 导出这张图…", null, (_, _) => ExportSingle(tex));
+        menu.Items.Add("📁 在资源管理器中定位 bundle", null, (_, _) => LocateBundle(tex));
+        card.ContextMenuStrip = menu; pic.ContextMenuStrip = menu; lbl.ContextMenuStrip = menu;
+
         void Pick(object s, EventArgs e)
         {
             using var dlg = new OpenFileDialog { Filter = "图片|*.png;*.jpg;*.jpeg;*.bmp;*.webp" };
@@ -397,31 +432,22 @@ public class MainForm : Form
         _status.Text = $"缩略图大小: {_thumb}px";
     }
 
-    /// <summary>需要裁切的类型 (固定竖版比例, 直接套原图会变形)。</summary>
-    private static bool NeedsCrop(string texName)
-    {
-        var k = NameParser.Parse(texName).Kind;
-        return k is "Card2" or "ThinCard";
-    }
-
-    private void DoReplace(RoundedCard card, string imagePath)
+    private void DoReplace(RoundedCard card, string imagePath, bool forceCrop = false)
     {
         var tex = (TexRef)card.Tag;
         try
         {
+            // 比例与目标差异大(或强制裁切)时弹裁切窗口; 比例接近则直接缩放
             byte[] cropped = null;
-            if (NeedsCrop(tex.Name))
+            int sw, sh;
+            using (var probe = Image.FromFile(imagePath)) { sw = probe.Width; sh = probe.Height; }
+            bool needCrop = forceCrop ||
+                Math.Abs((double)sw / sh - (double)tex.Width / tex.Height) > 0.02;
+            if (needCrop)
             {
-                // 若新图比例与目标差异较大, 弹裁切窗口; 比例已接近则直接用
-                using var probe = Image.FromFile(imagePath);
-                double srcAspect = (double)probe.Width / probe.Height;
-                double tgtAspect = (double)tex.Width / tex.Height;
-                if (Math.Abs(srcAspect - tgtAspect) > 0.02)
-                {
-                    using var crop = new CropDialog(imagePath, tex.Width, tex.Height, tex.Display ?? tex.Name);
-                    if (crop.ShowDialog(this) != DialogResult.OK) { _status.Text = "已取消裁切"; return; }
-                    cropped = crop.ResultPng;
-                }
+                using var crop = new CropDialog(imagePath, tex.Width, tex.Height, tex.Display ?? tex.Name);
+                if (crop.ShowDialog(this) != DialogResult.OK) { _status.Text = "已取消"; return; }
+                cropped = crop.ResultPng;
             }
 
             _status.Text = $"替换 {tex.Display ?? tex.Name} …";
@@ -555,6 +581,31 @@ public class MainForm : Form
         PackService.SaveWorkspace(_folder, _ws);
         _status.Text = $"已还原 {n} 个 bundle";
         if (_selHeroBtn != null) _selHeroBtn.PerformClick(); else ShowFolderTextures();
+    }
+
+    private static string SafeFileName(string s)
+    {
+        string r = string.Concat((s ?? "tex").Split(Path.GetInvalidFileNameChars()));
+        return string.IsNullOrEmpty(r) ? "tex" : r;
+    }
+
+    private void ExportSingle(TexRef tex)
+    {
+        using var dlg = new SaveFileDialog { Filter = "PNG 图片|*.png", FileName = SafeFileName(tex.Name) + ".png" };
+        if (dlg.ShowDialog() != DialogResult.OK) return;
+        try
+        {
+            File.WriteAllBytes(dlg.FileName, _engine.DecodePng(tex.BundlePath, tex.PathId, 0));
+            _status.Text = "✓ 已导出 " + Path.GetFileName(dlg.FileName);
+        }
+        catch (Exception ex) { MessageBox.Show("导出失败: " + ex.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+    }
+
+    private void LocateBundle(TexRef tex)
+    {
+        if (!File.Exists(tex.BundlePath)) { _status.Text = "找不到对应 bundle 文件"; return; }
+        try { System.Diagnostics.Process.Start("explorer.exe", $"/select,\"{tex.BundlePath}\""); }
+        catch (Exception ex) { _status.Text = "定位失败: " + ex.Message; }
     }
 
     private static Image BytesToImage(byte[] png)

@@ -48,17 +48,31 @@ public class CropDialog : Form
         StartPosition = FormStartPosition.CenterParent;
         BackColor = Theme.Bg; ForeColor = Theme.Text; Font = Theme.UI(9.5f);
 
-        var bar = new Panel { Dock = DockStyle.Bottom, Height = 50, BackColor = Theme.Bar };
-        var info = new Label
-        {
-            Dock = DockStyle.Left, Width = 460, ForeColor = Theme.SubText, TextAlign = ContentAlignment.MiddleLeft,
-            Padding = new Padding(12, 0, 0, 0),
-            Text = "拖动框=移动 · 滚轮=缩放 · 边角=改大小 · 比例已锁定"
-        };
-        var ok = Theme.FlatButton("✔ 确定裁切", 120); ok.Dock = DockStyle.Right; ok.Click += (_, _) => DoCrop();
-        var cancel = Theme.FlatButton("取消", 90); cancel.Dock = DockStyle.Right;
+        AutoScaleMode = AutoScaleMode.Dpi;
+        KeyPreview = true;
+        KeyDown += OnKey;
+
+        var bar = new Panel { Dock = DockStyle.Bottom, Height = 52, BackColor = Theme.Bar };
+        var tools = new FlowLayoutPanel { Dock = DockStyle.Left, AutoSize = true, WrapContents = false, Padding = new Padding(8, 9, 0, 0), BackColor = Theme.Bar };
+        var btnCenter = Theme.FlatButton("居中"); btnCenter.Margin = new Padding(3); btnCenter.Click += (_, _) => CenterCrop();
+        var btnFill = Theme.FlatButton("铺满"); btnFill.Margin = new Padding(3); btnFill.Click += (_, _) => { InitCrop(); _canvas.Invalidate(); };
+        var btnZoomIn = Theme.FlatButton("放大 +"); btnZoomIn.Margin = new Padding(3); btnZoomIn.Click += (_, _) => ZoomCrop(0.9f);
+        var btnZoomOut = Theme.FlatButton("缩小 −"); btnZoomOut.Margin = new Padding(3); btnZoomOut.Click += (_, _) => ZoomCrop(1.111f);
+        tools.Controls.AddRange(new Control[] { btnCenter, btnFill, btnZoomIn, btnZoomOut });
+
+        var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(0, 9, 8, 0), BackColor = Theme.Bar };
+        var ok = Theme.FlatButton("✔ 确定"); ok.Margin = new Padding(3); ok.Click += (_, _) => DoCrop();
+        var cancel = Theme.FlatButton("取消"); cancel.Margin = new Padding(3);
         cancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
-        bar.Controls.Add(info); bar.Controls.Add(cancel); bar.Controls.Add(ok);
+        right.Controls.Add(ok); right.Controls.Add(cancel);
+        bar.Controls.Add(tools); bar.Controls.Add(right);
+
+        var hint = new Label
+        {
+            Dock = DockStyle.Top, Height = 26, BackColor = Theme.Bar, ForeColor = Theme.SubText,
+            TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 0, 0),
+            Text = "拖动框=移动 · 方向键=微调(Shift 大步) · 滚轮/+−=缩放 · 边角=改大小 · 比例已锁定"
+        };
 
         _canvas.Paint += OnPaint;
         _canvas.MouseDown += OnMouseDown;
@@ -71,9 +85,51 @@ public class CropDialog : Form
             ?.SetValue(_canvas, true);
 
         Controls.Add(_canvas);
+        Controls.Add(hint);
         Controls.Add(bar);
 
         InitCrop();
+    }
+
+    private void CenterCrop()
+    {
+        _crop = new RectangleF((_src.Width - _crop.Width) / 2, (_src.Height - _crop.Height) / 2, _crop.Width, _crop.Height);
+        _canvas.Invalidate();
+    }
+
+    private void ZoomCrop(float factor)
+    {
+        float cx = _crop.X + _crop.Width / 2, cy = _crop.Y + _crop.Height / 2;
+        float nw = _crop.Width * factor, nh = (float)(nw / _aspect);
+        if (nw < 20 || nw > _src.Width || nh > _src.Height) return;
+        float nx = Clamp(cx - nw / 2, 0, _src.Width - nw);
+        float ny = Clamp(cy - nh / 2, 0, _src.Height - nh);
+        _crop = new RectangleF(nx, ny, nw, nh);
+        _canvas.Invalidate();
+    }
+
+    private void MoveCrop(float dx, float dy)
+    {
+        float nx = Clamp(_crop.X + dx, 0, _src.Width - _crop.Width);
+        float ny = Clamp(_crop.Y + dy, 0, _src.Height - _crop.Height);
+        _crop = new RectangleF(nx, ny, _crop.Width, _crop.Height);
+        _canvas.Invalidate();
+    }
+
+    private void OnKey(object s, KeyEventArgs e)
+    {
+        float step = e.Shift ? 20 : 5;
+        switch (e.KeyCode)
+        {
+            case Keys.Left: MoveCrop(-step, 0); break;
+            case Keys.Right: MoveCrop(step, 0); break;
+            case Keys.Up: MoveCrop(0, -step); break;
+            case Keys.Down: MoveCrop(0, step); break;
+            case Keys.Oemplus: case Keys.Add: ZoomCrop(0.9f); break;
+            case Keys.OemMinus: case Keys.Subtract: ZoomCrop(1.111f); break;
+            default: return;
+        }
+        e.Handled = true;
     }
 
     /// <summary>初始裁切框: 在原图内取最大的、符合目标比例的居中矩形。</summary>

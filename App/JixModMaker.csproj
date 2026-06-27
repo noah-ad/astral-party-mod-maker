@@ -8,6 +8,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>JixModMaker</AssemblyName>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <!-- 第三方库放在仓库根的 libs/ 下 (见 libs/README.txt 说明来源与协议) -->
     <LibsDir>$(MSBuildProjectDirectory)/../libs</LibsDir>
   </PropertyGroup>

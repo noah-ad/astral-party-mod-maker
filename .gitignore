@@ -11,6 +11,7 @@ Probe/
 角色命名备份.json
 启动工具.bat
 *.png
+!assets/*.png
 
 # 游戏资源 (版权所有，禁止上传)
 *.bundle

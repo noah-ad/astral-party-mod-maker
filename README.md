@@ -14,6 +14,10 @@
 - **缩放 / 重命名**：Ctrl + 滚轮缩放缩略图；右键给角色起名（持久保存）。
 - **安全**：所有替换前自动备份，可一键还原。
 
+## ⬇️ 下载使用（普通玩家）
+
+不想编译？直接到 [**Releases**](https://github.com/noah-ad/astral-party-mod-maker/releases) 下载打包好的 `吉星立绘Mod制作器.zip`，解压后双击根目录的「启动 吉星立绘Mod制作器.bat」即可，电脑无需安装任何环境。
+
 ## 🔧 编译
 
 需要 [.NET 8 SDK](https://dotnet.microsoft.com/download)。
@@ -43,6 +47,14 @@ dotnet run -c Release
 - [SixLabors.ImageSharp](https://github.com/SixLabors/ImageSharp) — 图像处理
 
 详见 [`libs/README.txt`](libs/README.txt)。
+
+## ☕ 赞助支持
+
+工具完全免费、永久开源。如果它帮你省了事，欢迎请作者喝杯奶茶（完全自愿，绝不影响任何功能）：
+
+<img src="assets/sponsor_wechat.png" width="260" alt="微信赞助码">
+
+> ⚠️ 本工具只在本 GitHub 仓库免费发布。请勿从任何第三方渠道付费购买，谨防上当受骗。
 
 ## ⚠️ 免责声明
 

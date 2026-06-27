@@ -97,6 +97,7 @@ public class MainForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        NoticeDialog.ShowIfFirst(this);   // 首次启动: 免费开源提示, 防被倒卖付费
         if (!string.IsNullOrEmpty(_initFolder) && Directory.Exists(_initFolder))
         {
             SetFolder(_initFolder);

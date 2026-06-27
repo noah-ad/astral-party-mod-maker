@@ -5,7 +5,6 @@ using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using Img = SixLabors.ImageSharp.Image;
-using IRect = SixLabors.ImageSharp.Rectangle;
 using PointF = System.Drawing.PointF;
 using Point = System.Drawing.Point;
 using RectangleF = System.Drawing.RectangleF;
@@ -16,23 +15,26 @@ using Color = System.Drawing.Color;
 namespace JixModMaker;
 
 /// <summary>
-/// 裁切窗口: 显示原图 + 按目标宽高比锁定的裁切框, 可拖动/缩放/滚轮调整。
-/// 确定后裁出区域并缩放到 (targetW × targetH) 返回 PNG 字节。
+/// 画布合成编辑器: 把一张图自由缩放/平移到固定尺寸画布上, 所见即所得。
+/// 画布(targetW×targetH) = 最终输出区域; 图层可比画布小(周围透明)或大(超出裁掉)。
+/// 既能"缩小整图摆到一角", 也能"放大铺满裁切"。
 /// </summary>
 public class CropDialog : Form
 {
-    private readonly Bitmap _src;          // 原图 (WinForms 位图, 用于显示)
+    private readonly Bitmap _src;
     private readonly string _srcPath;
     private readonly int _targetW, _targetH;
-    private readonly double _aspect;        // 目标宽高比 W/H
 
     private readonly Panel _canvas = new() { Dock = DockStyle.Fill, BackColor = Theme.PicBg };
-    private RectangleF _crop;               // 裁切框 (图像像素坐标)
-    private float _scale;                   // 显示缩放
-    private PointF _imgOrigin;              // 图像在画布上的左上角偏移
+
+    private float _layerScale = 1f;     // 图层相对原图的缩放 (画布坐标)
+    private PointF _offset;             // 图层左上角在画布坐标系中的位置
+    private float _viewScale;           // 画布 → 屏幕显示缩放
+    private PointF _canvasOrigin;       // 画布左上角在屏幕的位置
+
     private bool _dragging;
-    private PointF _dragStart;
-    private RectangleF _cropStart;
+    private Point _dragStart;
+    private PointF _offsetStart;
 
     public byte[] ResultPng { get; private set; }
 
@@ -41,27 +43,26 @@ public class CropDialog : Form
         _srcPath = imagePath;
         _src = new Bitmap(imagePath);
         _targetW = targetW; _targetH = targetH;
-        _aspect = (double)targetW / targetH;
 
-        Text = $"裁切 — {title}  (目标 {targetW}×{targetH})";
-        Width = 900; Height = 720;
+        Text = $"调整布局 — {title}  (画布 {targetW}×{targetH})";
+        Width = 940; Height = 760;
         StartPosition = FormStartPosition.CenterParent;
         BackColor = Theme.Bg; ForeColor = Theme.Text; Font = Theme.UI(9.5f);
-
         AutoScaleMode = AutoScaleMode.Dpi;
         KeyPreview = true;
         KeyDown += OnKey;
 
         var bar = new Panel { Dock = DockStyle.Bottom, Height = 52, BackColor = Theme.Bar };
         var tools = new FlowLayoutPanel { Dock = DockStyle.Left, AutoSize = true, WrapContents = false, Padding = new Padding(8, 9, 0, 0), BackColor = Theme.Bar };
-        var btnCenter = Theme.FlatButton("居中"); btnCenter.Margin = new Padding(3); btnCenter.Click += (_, _) => CenterCrop();
-        var btnFill = Theme.FlatButton("铺满"); btnFill.Margin = new Padding(3); btnFill.Click += (_, _) => { InitCrop(); _canvas.Invalidate(); };
-        var btnZoomIn = Theme.FlatButton("放大 +"); btnZoomIn.Margin = new Padding(3); btnZoomIn.Click += (_, _) => ZoomCrop(0.9f);
-        var btnZoomOut = Theme.FlatButton("缩小 −"); btnZoomOut.Margin = new Padding(3); btnZoomOut.Click += (_, _) => ZoomCrop(1.111f);
-        tools.Controls.AddRange(new Control[] { btnCenter, btnFill, btnZoomIn, btnZoomOut });
+        var btnFit = Theme.FlatButton("适应整图"); btnFit.Margin = new Padding(3); btnFit.Click += (_, _) => { Fit(); };
+        var btnFill = Theme.FlatButton("填满画布"); btnFill.Margin = new Padding(3); btnFill.Click += (_, _) => { Fill(); };
+        var btnCenter = Theme.FlatButton("居中"); btnCenter.Margin = new Padding(3); btnCenter.Click += (_, _) => { Center(); };
+        var btnZoomIn = Theme.FlatButton("放大 +"); btnZoomIn.Margin = new Padding(3); btnZoomIn.Click += (_, _) => ZoomLayer(1.1f);
+        var btnZoomOut = Theme.FlatButton("缩小 −"); btnZoomOut.Margin = new Padding(3); btnZoomOut.Click += (_, _) => ZoomLayer(0.9f);
+        tools.Controls.AddRange(new Control[] { btnFit, btnFill, btnCenter, btnZoomIn, btnZoomOut });
 
         var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(0, 9, 8, 0), BackColor = Theme.Bar };
-        var ok = Theme.FlatButton("✔ 确定"); ok.Margin = new Padding(3); ok.Click += (_, _) => DoCrop();
+        var ok = Theme.FlatButton("✔ 确定"); ok.Margin = new Padding(3); ok.Click += (_, _) => DoRender();
         var cancel = Theme.FlatButton("取消"); cancel.Margin = new Padding(3);
         cancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
         right.Controls.Add(ok); right.Controls.Add(cancel);
@@ -71,15 +72,15 @@ public class CropDialog : Form
         {
             Dock = DockStyle.Top, Height = 26, BackColor = Theme.Bar, ForeColor = Theme.SubText,
             TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 0, 0),
-            Text = "拖动框=移动 · 方向键=微调(Shift 大步) · 滚轮/+−=缩放 · 边角=改大小 · 比例已锁定"
+            Text = "拖动=移动图片 · 滚轮/+−=缩放 · 方向键=微调(Shift 大步) · 亮区(画布)内为最终效果, 外面会被裁掉"
         };
 
         _canvas.Paint += OnPaint;
         _canvas.MouseDown += OnMouseDown;
         _canvas.MouseMove += OnMouseMove;
         _canvas.MouseUp += (_, _) => _dragging = false;
-        _canvas.MouseWheel += OnWheel;
-        _canvas.Resize += (_, _) => { RecalcScale(); _canvas.Invalidate(); };
+        _canvas.MouseWheel += (_, e) => ZoomLayer(e.Delta > 0 ? 1.1f : 0.9f);
+        _canvas.Resize += (_, _) => { RecalcView(); _canvas.Invalidate(); };
         typeof(Panel).GetProperty("DoubleBuffered",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
             ?.SetValue(_canvas, true);
@@ -88,196 +89,147 @@ public class CropDialog : Form
         Controls.Add(hint);
         Controls.Add(bar);
 
-        InitCrop();
+        Fit();   // 初始: 整图适应画布居中
     }
 
-    private void CenterCrop()
-    {
-        _crop = new RectangleF((_src.Width - _crop.Width) / 2, (_src.Height - _crop.Height) / 2, _crop.Width, _crop.Height);
-        _canvas.Invalidate();
-    }
+    protected override void OnShown(EventArgs e) { base.OnShown(e); RecalcView(); _canvas.Invalidate(); }
 
-    private void ZoomCrop(float factor)
-    {
-        float cx = _crop.X + _crop.Width / 2, cy = _crop.Y + _crop.Height / 2;
-        float nw = _crop.Width * factor, nh = (float)(nw / _aspect);
-        if (nw < 20 || nw > _src.Width || nh > _src.Height) return;
-        float nx = Clamp(cx - nw / 2, 0, _src.Width - nw);
-        float ny = Clamp(cy - nh / 2, 0, _src.Height - nh);
-        _crop = new RectangleF(nx, ny, nw, nh);
-        _canvas.Invalidate();
-    }
+    // ---------- 视图/坐标 ----------
 
-    private void MoveCrop(float dx, float dy)
-    {
-        float nx = Clamp(_crop.X + dx, 0, _src.Width - _crop.Width);
-        float ny = Clamp(_crop.Y + dy, 0, _src.Height - _crop.Height);
-        _crop = new RectangleF(nx, ny, _crop.Width, _crop.Height);
-        _canvas.Invalidate();
-    }
-
-    private void OnKey(object s, KeyEventArgs e)
-    {
-        float step = e.Shift ? 20 : 5;
-        switch (e.KeyCode)
-        {
-            case Keys.Left: MoveCrop(-step, 0); break;
-            case Keys.Right: MoveCrop(step, 0); break;
-            case Keys.Up: MoveCrop(0, -step); break;
-            case Keys.Down: MoveCrop(0, step); break;
-            case Keys.Oemplus: case Keys.Add: ZoomCrop(0.9f); break;
-            case Keys.OemMinus: case Keys.Subtract: ZoomCrop(1.111f); break;
-            default: return;
-        }
-        e.Handled = true;
-    }
-
-    /// <summary>初始裁切框: 在原图内取最大的、符合目标比例的居中矩形。</summary>
-    private void InitCrop()
-    {
-        float iw = _src.Width, ih = _src.Height;
-        float cw, ch;
-        if (iw / ih > _aspect) { ch = ih; cw = (float)(ih * _aspect); }
-        else { cw = iw; ch = (float)(iw / _aspect); }
-        _crop = new RectangleF((iw - cw) / 2, (ih - ch) / 2, cw, ch);
-    }
-
-    private void RecalcScale()
+    private void RecalcView()
     {
         if (_canvas.ClientSize.Width <= 0) return;
-        _scale = Math.Min((float)_canvas.ClientSize.Width / _src.Width,
-                          (float)_canvas.ClientSize.Height / _src.Height);
-        _imgOrigin = new PointF(
-            (_canvas.ClientSize.Width - _src.Width * _scale) / 2,
-            (_canvas.ClientSize.Height - _src.Height * _scale) / 2);
+        float pad = 40f;
+        float availW = _canvas.ClientSize.Width - pad * 2, availH = _canvas.ClientSize.Height - pad * 2;
+        _viewScale = Math.Min(availW / _targetW, availH / _targetH);
+        _canvasOrigin = new PointF(
+            (_canvas.ClientSize.Width - _targetW * _viewScale) / 2,
+            (_canvas.ClientSize.Height - _targetH * _viewScale) / 2);
     }
 
-    protected override void OnShown(EventArgs e) { base.OnShown(e); RecalcScale(); _canvas.Invalidate(); }
+    private PointF CanvasToScreen(PointF c) => new(_canvasOrigin.X + c.X * _viewScale, _canvasOrigin.Y + c.Y * _viewScale);
 
-    private PointF ToScreen(PointF img) => new(_imgOrigin.X + img.X * _scale, _imgOrigin.Y + img.Y * _scale);
-    private PointF ToImage(Point scr) => new((scr.X - _imgOrigin.X) / _scale, (scr.Y - _imgOrigin.Y) / _scale);
+    // ---------- 布局操作 ----------
+
+    private void Fit()
+    {
+        _layerScale = Math.Min((float)_targetW / _src.Width, (float)_targetH / _src.Height);
+        Center();
+    }
+    private void Fill()
+    {
+        _layerScale = Math.Max((float)_targetW / _src.Width, (float)_targetH / _src.Height);
+        Center();
+    }
+    private void Center()
+    {
+        _offset = new PointF((_targetW - _src.Width * _layerScale) / 2, (_targetH - _src.Height * _layerScale) / 2);
+        _canvas.Invalidate();
+    }
+    private void ZoomLayer(float factor)
+    {
+        float ns = _layerScale * factor;
+        if (ns < 0.02f || ns > 30f) return;
+        // 以画布中心为锚缩放
+        var cc = new PointF(_targetW / 2f, _targetH / 2f);
+        _offset = new PointF(cc.X - (cc.X - _offset.X) * factor, cc.Y - (cc.Y - _offset.Y) * factor);
+        _layerScale = ns;
+        _canvas.Invalidate();
+    }
+    private void MoveLayer(float dx, float dy)
+    {
+        _offset = new PointF(_offset.X + dx, _offset.Y + dy);
+        _canvas.Invalidate();
+    }
+
+    // ---------- 绘制 ----------
 
     private void OnPaint(object s, PaintEventArgs e)
     {
         var g = e.Graphics;
         g.InterpolationMode = InterpolationMode.HighQualityBilinear;
-        g.DrawImage(_src, _imgOrigin.X, _imgOrigin.Y, _src.Width * _scale, _src.Height * _scale);
+        g.Clear(Theme.PicBg);
 
-        var sc = ToScreen(new PointF(_crop.X, _crop.Y));
-        var sz = new SizeF(_crop.Width * _scale, _crop.Height * _scale);
-        var r = new RectangleF(sc, sz);
+        // 图层
+        var lp = CanvasToScreen(_offset);
+        float lw = _src.Width * _layerScale * _viewScale, lh = _src.Height * _layerScale * _viewScale;
+        g.DrawImage(_src, lp.X, lp.Y, lw, lh);
 
-        // 框外压暗
-        using (var dim = new SolidBrush(Color.FromArgb(150, 0, 0, 0)))
+        // 画布区域
+        var cp = CanvasToScreen(PointF.Empty);
+        var canvasRect = new RectangleF(cp.X, cp.Y, _targetW * _viewScale, _targetH * _viewScale);
+
+        // 画布外压暗 (提示会被裁掉)
+        using (var dim = new SolidBrush(Color.FromArgb(160, 0, 0, 0)))
         {
-            var full = _canvas.ClientRectangle;
-            var reg = new Region(full);
-            reg.Exclude(Rectangle.Round(r));
+            var reg = new Region(_canvas.ClientRectangle);
+            reg.Exclude(Rectangle.Round(canvasRect));
             g.FillRegion(dim, reg);
         }
-        // 框 + 三分线 + 角柄
+        // 画布边框 + 三分线
         using var pen = new Pen(Theme.Accent, 2f);
-        g.DrawRectangle(pen, r.X, r.Y, r.Width, r.Height);
-        using var thin = new Pen(Color.FromArgb(120, 255, 255, 255), 1f);
+        g.DrawRectangle(pen, canvasRect.X, canvasRect.Y, canvasRect.Width, canvasRect.Height);
+        using var thin = new Pen(Color.FromArgb(90, 255, 255, 255), 1f);
         for (int i = 1; i <= 2; i++)
         {
-            g.DrawLine(thin, r.X + r.Width * i / 3, r.Y, r.X + r.Width * i / 3, r.Bottom);
-            g.DrawLine(thin, r.X, r.Y + r.Height * i / 3, r.Right, r.Y + r.Height * i / 3);
+            g.DrawLine(thin, canvasRect.X + canvasRect.Width * i / 3, canvasRect.Y, canvasRect.X + canvasRect.Width * i / 3, canvasRect.Bottom);
+            g.DrawLine(thin, canvasRect.X, canvasRect.Y + canvasRect.Height * i / 3, canvasRect.Right, canvasRect.Y + canvasRect.Height * i / 3);
         }
-        using var hb = new SolidBrush(Theme.Accent);
-        foreach (var c in Corners(r)) g.FillRectangle(hb, c.X - 5, c.Y - 5, 10, 10);
     }
 
-    private static PointF[] Corners(RectangleF r) => new[]
-    {
-        new PointF(r.X, r.Y), new PointF(r.Right, r.Y),
-        new PointF(r.X, r.Bottom), new PointF(r.Right, r.Bottom)
-    };
+    // ---------- 交互 ----------
 
-    private int _activeCorner = -1;
     private void OnMouseDown(object s, MouseEventArgs e)
     {
-        var sc = ToScreen(new PointF(_crop.X, _crop.Y));
-        var r = new RectangleF(sc, new SizeF(_crop.Width * _scale, _crop.Height * _scale));
-        _activeCorner = -1;
-        var cs = Corners(r);
-        for (int i = 0; i < 4; i++)
-            if (Math.Abs(e.X - cs[i].X) < 10 && Math.Abs(e.Y - cs[i].Y) < 10) { _activeCorner = i; break; }
-
-        _dragging = true;
-        _dragStart = e.Location;
-        _cropStart = _crop;
+        if (e.Button != MouseButtons.Left) return;
+        _dragging = true; _dragStart = e.Location; _offsetStart = _offset;
+        _canvas.Focus();
     }
-
     private void OnMouseMove(object s, MouseEventArgs e)
     {
         if (!_dragging) return;
-        float dxImg = (e.X - _dragStart.X) / _scale, dyImg = (e.Y - _dragStart.Y) / _scale;
-
-        if (_activeCorner < 0)
-        {
-            // 移动整个框
-            float nx = Clamp(_cropStart.X + dxImg, 0, _src.Width - _crop.Width);
-            float ny = Clamp(_cropStart.Y + dyImg, 0, _src.Height - _crop.Height);
-            _crop = new RectangleF(nx, ny, _crop.Width, _crop.Height);
-        }
-        else
-        {
-            // 缩放 (保持比例, 以对角为锚)
-            float anchorX = (_activeCorner is 0 or 2) ? _cropStart.Right : _cropStart.Left;
-            float anchorY = (_activeCorner is 0 or 1) ? _cropStart.Bottom : _cropStart.Top;
-            float curX = (_activeCorner is 0 or 2) ? _cropStart.X + dxImg : _cropStart.Right + dxImg;
-            float newW = Math.Abs(anchorX - curX);
-            float newH = (float)(newW / _aspect);
-            newW = Math.Max(20, newW); newH = Math.Max(20, newH);
-            float x = Math.Min(anchorX, anchorX - newW * Math.Sign(anchorX - curX == 0 ? 1 : anchorX - curX));
-            // 简化: 以锚点为固定角重建
-            float left = (_activeCorner is 1 or 3) ? anchorX : anchorX - newW;
-            float top = (_activeCorner is 2 or 3) ? anchorY : anchorY - newH;
-            var rect = new RectangleF(left, top, newW, newH);
-            if (rect.X >= 0 && rect.Y >= 0 && rect.Right <= _src.Width && rect.Bottom <= _src.Height)
-                _crop = rect;
-        }
+        _offset = new PointF(
+            _offsetStart.X + (e.X - _dragStart.X) / _viewScale,
+            _offsetStart.Y + (e.Y - _dragStart.Y) / _viewScale);
         _canvas.Invalidate();
     }
-
-    private void OnWheel(object s, MouseEventArgs e)
+    private void OnKey(object s, KeyEventArgs e)
     {
-        float factor = e.Delta > 0 ? 0.92f : 1.08f;
-        float cx = _crop.X + _crop.Width / 2, cy = _crop.Y + _crop.Height / 2;
-        float nw = _crop.Width * factor, nh = (float)(nw / _aspect);
-        if (nw < 20 || nw > _src.Width || nh > _src.Height) return;
-        float nx = Clamp(cx - nw / 2, 0, _src.Width - nw);
-        float ny = Clamp(cy - nh / 2, 0, _src.Height - nh);
-        _crop = new RectangleF(nx, ny, nw, nh);
-        _canvas.Invalidate();
+        float step = e.Shift ? 20 : 4;
+        switch (e.KeyCode)
+        {
+            case Keys.Left: MoveLayer(-step, 0); break;
+            case Keys.Right: MoveLayer(step, 0); break;
+            case Keys.Up: MoveLayer(0, -step); break;
+            case Keys.Down: MoveLayer(0, step); break;
+            case Keys.Oemplus: case Keys.Add: ZoomLayer(1.1f); break;
+            case Keys.OemMinus: case Keys.Subtract: ZoomLayer(0.9f); break;
+            default: return;
+        }
+        e.Handled = true;
     }
 
-    private static float Clamp(float v, float lo, float hi) => Math.Max(lo, Math.Min(hi, v));
+    // ---------- 输出 ----------
 
-    private void DoCrop()
+    private void DoRender()
     {
         try
         {
-            using var img = Img.Load<Rgba32>(_srcPath);
-            var rect = new IRect(
-                (int)Math.Round(_crop.X), (int)Math.Round(_crop.Y),
-                (int)Math.Round(_crop.Width), (int)Math.Round(_crop.Height));
-            rect.X = Math.Max(0, rect.X); rect.Y = Math.Max(0, rect.Y);
-            rect.Width = Math.Min(rect.Width, img.Width - rect.X);
-            rect.Height = Math.Min(rect.Height, img.Height - rect.Y);
+            using var canvas = new Image<Rgba32>(_targetW, _targetH);   // 透明背景
+            using var layer = Img.Load<Rgba32>(_srcPath);
+            int lw = Math.Max(1, (int)Math.Round(_src.Width * _layerScale));
+            int lh = Math.Max(1, (int)Math.Round(_src.Height * _layerScale));
+            layer.Mutate(c => c.Resize(lw, lh));
+            var loc = new SixLabors.ImageSharp.Point((int)Math.Round(_offset.X), (int)Math.Round(_offset.Y));
+            canvas.Mutate(c => c.DrawImage(layer, loc, 1f));
 
-            img.Mutate(c => c.Crop(rect).Resize(_targetW, _targetH));
             using var ms = new MemoryStream();
-            img.SaveAsPng(ms);
+            canvas.SaveAsPng(ms);
             ResultPng = ms.ToArray();
             DialogResult = DialogResult.OK;
             Close();
         }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"裁切失败：{ex.Message}", "错误");
-        }
+        catch (Exception ex) { MessageBox.Show($"生成失败：{ex.Message}", "错误"); }
     }
 
     protected override void Dispose(bool disposing)

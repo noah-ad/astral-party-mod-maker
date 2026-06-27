@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>JixModMaker</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- 第三方库放在仓库根的 libs/ 下 (见 libs/README.txt 说明来源与协议) -->
+    <LibsDir>$(MSBuildProjectDirectory)/../libs</LibsDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="AssetsTools.NET">
+      <HintPath>$(LibsDir)/AssetsTools.NET.dll</HintPath>
+    </Reference>
+    <Reference Include="AssetsTools.NET.Texture">
+      <HintPath>$(LibsDir)/AssetsTools.NET.Texture.dll</HintPath>
+    </Reference>
+    <Reference Include="AssetRipper.TextureDecoder">
+      <HintPath>$(LibsDir)/AssetRipper.TextureDecoder.dll</HintPath>
+    </Reference>
+    <Reference Include="SixLabors.ImageSharp">
+      <HintPath>$(LibsDir)/SixLabors.ImageSharp.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <!-- 把 libs 下的 dll 与类型库复制到输出目录 -->
+  <Target Name="CopyRuntimeDeps" AfterTargets="Build">
+    <ItemGroup>
+      <LibDlls Include="$(LibsDir)/*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(LibDlls)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" OverwriteReadOnlyFiles="true" />
+    <Copy SourceFiles="$(LibsDir)/classdata.tpk" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

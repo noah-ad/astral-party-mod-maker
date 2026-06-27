@@ -86,6 +86,12 @@ public class MainForm : Form
         Controls.Add(topBar);
 
         _flow.MouseWheel += OnFlowWheel;
+        // 窗口/视口变化时, 让分组标题宽度自适应, 避免撑出横向滚动条、卡片不换行
+        _flow.ClientSizeChanged += (_, _) =>
+        {
+            foreach (Control c in _flow.Controls)
+                if (c is Panel hp && (hp.Tag as string) == "header") hp.Width = HeaderWidth();
+        };
     }
 
     protected override void OnShown(EventArgs e)
@@ -312,12 +318,14 @@ public class MainForm : Form
         }
     }
 
+    private int HeaderWidth() => Math.Max(180, _flow.ClientSize.Width - 28);
+
     /// <summary>添加一个撑满整行的皮肤分组标题。</summary>
     private void AddHeader(string title)
     {
         var p = new Panel
         {
-            Width = Math.Max(300, _flow.ClientSize.Width - 28), Height = 34,
+            Tag = "header", Width = HeaderWidth(), Height = 34,
             Margin = new Padding(6, 12, 6, 2), BackColor = Theme.FlowBg
         };
         p.Controls.Add(new Panel { Dock = DockStyle.Bottom, Height = 2, BackColor = Theme.AccentDim });

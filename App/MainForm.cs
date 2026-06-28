@@ -16,9 +16,13 @@ public class MainForm : Form
     private int _loadSeq;                 // 防角色快速切换时旧加载继续填充
     private Button _selHeroBtn;
 
-    public const string Version = "v1.0.3";   // 显示在标题栏, 方便确认是否为最新修复版
-    private const int MinThumb = 64, MaxThumb = 256, SrcThumb = 256, Pad = 10;
-    private int _thumb = 132;
+    public const string Version = "v1.0.4";   // 显示在标题栏, 方便确认是否为最新修复版
+    // 以下均为 96DPI(100%缩放) 下的"设计像素", 运行时用 Sc() 按系统缩放放大
+    private const int MinThumb = 64, MaxThumb = 256, SrcThumb = 256, Pad = 10, ThumbDef = 132;
+    private int _thumb = ThumbDef;
+
+    private float _dpi = 1f;                      // 系统缩放倍率 = DeviceDpi/96 (100%=1, 200%=2)
+    private int Sc(int v) => (int)Math.Round(v * _dpi);   // 设计像素 -> 当前缩放下的物理像素
     private const string GameDefault =
         "D:/steam/steamapps/common/Astral Party/8vJXn6CN/AstralParty_CN_Data/StreamingAssets/aa/StandaloneWindows64";
 
@@ -36,13 +40,16 @@ public class MainForm : Form
         Dock = DockStyle.Fill, ForeColor = Theme.SubText, TextAlign = ContentAlignment.MiddleLeft,
         Padding = new Padding(12, 0, 0, 0), Text = "就绪 — 「打开游戏目录」按角色浏览，或「打开文件夹」浏览 mod 包"
     };
+    private Label _heroTitle;
+    private Panel _bottomBar;
 
     public MainForm(string initFolder = null)
     {
         _initFolder = initFolder;
+        AutoScaleMode = AutoScaleMode.None;   // 完全手动按 DeviceDpi 缩放, 避免框架重复缩放
         Text = "吉星立绘 Mod 制作器  " + Version;
         Width = 1200; Height = 800;
-        MinimumSize = new Size(660, 480);   // 放小: 200%缩放的小屏笔记本也能完整放下/自由缩放
+        MinimumSize = new Size(560, 420);   // 放小: 200%缩放的小屏笔记本也能完整放下/自由缩放
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Bg;
         Font = Theme.UI(9f);
@@ -68,25 +75,80 @@ public class MainForm : Form
         btnMigrate.Click += (_, _) => MigrateOldMods();
         topBar.Controls.AddRange(new Control[] { btnGame, btnFolder, btnExport, btnImport, btnRestore, btnMigrate });
 
-        var heroTitle = new Label
+        _heroTitle = new Label
         {
             Dock = DockStyle.Top, Height = 30, Text = "  角色 / 分组", ForeColor = Theme.Text,
             Font = Theme.UI(10f, true), TextAlign = ContentAlignment.MiddleLeft, BackColor = Theme.Bg
         };
         _leftPanel.Controls.Add(_heroList);
-        _leftPanel.Controls.Add(heroTitle);
+        _leftPanel.Controls.Add(_heroTitle);
 
-        var bottomBar = new Panel { Dock = DockStyle.Bottom, Height = 30, BackColor = Theme.Bar };
+        _bottomBar = new Panel { Dock = DockStyle.Bottom, Height = 30, BackColor = Theme.Bar };
         _status.Font = Theme.UI(9f);
-        bottomBar.Controls.Add(_status);
+        _bottomBar.Controls.Add(_status);
 
         Controls.Add(_flow);
         Controls.Add(_leftPanel);
-        Controls.Add(bottomBar);
+        Controls.Add(_bottomBar);
         Controls.Add(topBar);
 
         _flow.MouseWheel += OnFlowWheel;
         // 分组标题宽度自适应由 GridFlow.OnLayout 统一处理(每次布局前缩到客户区宽), 避免撑出横向滚动条
+    }
+
+    /// <summary>句柄就绪后读取真实 DeviceDpi, 把所有"设计像素"按系统缩放放大一次(启动自适应)。</summary>
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        ApplyDpiScale(DeviceDpi);
+    }
+
+    /// <summary>跨不同缩放的显示器拖动时, 实时按新 DPI 重新缩放整套界面。</summary>
+    protected override void OnDpiChanged(DpiChangedEventArgs e)
+    {
+        base.OnDpiChanged(e);
+        ApplyDpiScale(e.DeviceDpiNew);
+    }
+
+    private bool _dpiSized;
+
+    private void ApplyDpiScale(int deviceDpi)
+    {
+        _dpi = deviceDpi / 96f;
+
+        // 固定像素的容器尺寸
+        _leftPanel.Width = Sc(210);
+        if (_heroTitle != null) _heroTitle.Height = Sc(30);
+        if (_bottomBar != null) _bottomBar.Height = Sc(30);
+        _flow.Padding = new Padding(Sc(10));
+        _heroList.Padding = new Padding(Sc(4));
+
+        // 缩略图尺寸: 按比例保持物理大小不变 (并夹在缩放后的上下限内)
+        _thumb = Math.Clamp(Sc(ThumbDef), Sc(MinThumb), Sc(MaxThumb));
+
+        var wa = Screen.FromControl(this).WorkingArea;
+        MinimumSize = new Size(Math.Min(Sc(560), wa.Width), Math.Min(Sc(420), wa.Height));
+        // 只在启动首次按缩放放大窗口(不超工作区); 跨屏 DPI 变化时窗口由系统调整, 这里只缩内容
+        if (!_dpiSized && WindowState == FormWindowState.Normal)
+        {
+            Size = new Size(Math.Min(Sc(1200), wa.Width), Math.Min(Sc(800), wa.Height));
+            _dpiSized = true;
+        }
+
+        // 已经显示的卡片/标题/角色按钮全部按新尺寸重排
+        RescaleExisting();
+    }
+
+    private void RescaleExisting()
+    {
+        _flow.SuspendLayout();
+        foreach (Control c in _flow.Controls)
+        {
+            if (c is RoundedCard rc) LayoutCard(rc);
+            else if ((c.Tag as string) == "header") c.Height = Sc(34);
+        }
+        _flow.ResumeLayout();
+        foreach (Control c in _heroList.Controls) c.Height = Sc(32);
     }
 
     protected override void OnShown(EventArgs e)
@@ -158,8 +220,8 @@ public class MainForm : Form
             {
                 Text = $"{_naming.Display(key)}  ({items.Count})", Tag = key,
                 FlatStyle = FlatStyle.Flat, ForeColor = Theme.Text, BackColor = Theme.Card,
-                Font = Theme.UI(9.5f), Width = 188, Height = 32, TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(2, 2, 2, 0), Cursor = Cursors.Hand, Padding = new Padding(8, 0, 0, 0)
+                Font = Theme.UI(9.5f), Width = 188, Height = Sc(32), TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(2, 2, 2, 0), Cursor = Cursors.Hand, Padding = new Padding(Sc(8), 0, 0, 0)
             };
             btn.FlatAppearance.BorderSize = 0;
             btn.FlatAppearance.MouseOverBackColor = Theme.AccentDim;
@@ -300,7 +362,7 @@ public class MainForm : Form
                 {
                     if (seq != _loadSeq) return;
                     byte[] png;
-                    try { png = _engine.DecodePng(tex.BundlePath, tex.PathId, SrcThumb); }
+                    try { png = _engine.DecodePng(tex.BundlePath, tex.PathId, Sc(SrcThumb)); }
                     catch { continue; }
                     if (IsHandleCreated)
                         BeginInvoke(() => { if (seq == _loadSeq) _flow.Controls.Add(MakeCard(tex, png)); });
@@ -322,10 +384,10 @@ public class MainForm : Form
     {
         var p = new Panel
         {
-            Tag = "header", Width = HeaderWidth(), Height = 34,
-            Margin = new Padding(6, 12, 6, 2), BackColor = Theme.FlowBg
+            Tag = "header", Width = HeaderWidth(), Height = Sc(34),
+            Margin = new Padding(Sc(6), Sc(12), Sc(6), Sc(2)), BackColor = Theme.FlowBg
         };
-        p.Controls.Add(new Panel { Dock = DockStyle.Bottom, Height = 2, BackColor = Theme.AccentDim });
+        p.Controls.Add(new Panel { Dock = DockStyle.Bottom, Height = Sc(2), BackColor = Theme.AccentDim });
         p.Controls.Add(new Label
         {
             Text = "  " + title, Dock = DockStyle.Fill, ForeColor = Theme.Accent,
@@ -416,18 +478,19 @@ public class MainForm : Form
     {
         var pic = (PictureBox)card.Controls[0];
         var lbl = (Label)card.Controls[1];
-        pic.Location = new Point(Pad, Pad);
+        int pad = Sc(Pad), gap = Sc(4), lblH = Sc(28), bottom = Sc(6);
+        pic.Location = new Point(pad, pad);
         pic.Size = new Size(_thumb, _thumb);
-        lbl.Location = new Point(Pad, Pad + _thumb + 4);
-        lbl.Size = new Size(_thumb, 28);
-        card.Size = new Size(_thumb + Pad * 2, Pad + _thumb + 4 + 28 + 6);
+        lbl.Location = new Point(pad, pad + _thumb + gap);
+        lbl.Size = new Size(_thumb, lblH);
+        card.Size = new Size(_thumb + pad * 2, pad + _thumb + gap + lblH + bottom);
     }
 
     private void OnFlowWheel(object sender, MouseEventArgs e)
     {
         if ((ModifierKeys & Keys.Control) == 0) return;
         if (e is HandledMouseEventArgs he) he.Handled = true;
-        int next = Math.Clamp(_thumb + (e.Delta > 0 ? 14 : -14), MinThumb, MaxThumb);
+        int next = Math.Clamp(_thumb + (e.Delta > 0 ? Sc(14) : -Sc(14)), Sc(MinThumb), Sc(MaxThumb));
         if (next == _thumb) return;
         _thumb = next;
         _flow.SuspendLayout();
@@ -470,7 +533,7 @@ public class MainForm : Form
 
             var pic = (PictureBox)card.Controls[0];
             pic.Image?.Dispose();
-            pic.Image = BytesToImage(_engine.DecodePng(tex.BundlePath, tex.PathId, SrcThumb));
+            pic.Image = BytesToImage(_engine.DecodePng(tex.BundlePath, tex.PathId, Sc(SrcThumb)));
             tex.Modded = true;
             card.SetFill(Theme.CardMod);
             _status.Text = $"✓ 已替换 {tex.Display ?? tex.Name}（原始已备份；可导出图包分享）";

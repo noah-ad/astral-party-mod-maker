@@ -17,16 +17,53 @@ public sealed class GridFlow : FlowLayoutPanel
         WrapContents = true;
     }
 
+    /// <summary>
+    /// 可用内容宽度。竖向滚动条出现前 ClientSize 还没扣除它, 此时主动预留其宽度,
+    /// 避免"先按无滚动条的宽度布局→滚动条冒出来→子项反而超宽→横向滚动条"的时序竞态。
+    /// </summary>
+    private int InnerWidth()
+    {
+        int reserve = VerticalScroll.Visible ? 0 : SystemInformation.VerticalScrollBarWidth;
+        return ClientSize.Width - Padding.Horizontal - reserve;
+    }
+
     protected override void OnLayout(LayoutEventArgs e)
     {
-        // 客户区已自动扣除竖向滚动条宽度; 标题撑满该宽度但绝不超出
-        int inner = ClientSize.Width - Padding.Horizontal;
+        int inner = InnerWidth();
         foreach (Control c in Controls)
         {
             if ((c.Tag as string) != "header") continue;
             int target = inner - c.Margin.Horizontal;
             if (target < 80) target = 80;
             if (c.Width != target) c.Width = target;   // 在 base 布局前改好, 让换行按正确宽度计算
+        }
+        base.OnLayout(e);
+    }
+}
+
+/// <summary>
+/// 纵向列表容器(左侧角色分组)。每次布局前把所有子项(按钮)精确缩到客户区宽,
+/// 这样无论 DPI/竖向滚动条多宽, 都不会因按钮比可视区宽而冒出横向滚动条。
+/// </summary>
+public sealed class SideListFlow : FlowLayoutPanel
+{
+    public SideListFlow()
+    {
+        AutoScroll = true;
+        WrapContents = false;
+        FlowDirection = FlowDirection.TopDown;
+    }
+
+    protected override void OnLayout(LayoutEventArgs e)
+    {
+        // 角色列表通常很长、竖向滚动条几乎总在; 滚动条出现前主动预留其宽度, 杜绝横向滚动条
+        int reserve = VerticalScroll.Visible ? 0 : SystemInformation.VerticalScrollBarWidth;
+        int inner = ClientSize.Width - Padding.Horizontal - reserve;
+        foreach (Control c in Controls)
+        {
+            int target = inner - c.Margin.Horizontal;
+            if (target < 40) target = 40;
+            if (c.Width != target) c.Width = target;
         }
         base.OnLayout(e);
     }

@@ -16,7 +16,7 @@ public class MainForm : Form
     private int _loadSeq;                 // 防角色快速切换时旧加载继续填充
     private Button _selHeroBtn;
 
-    public const string Version = "v1.0.2";   // 显示在标题栏, 方便确认是否为最新修复版
+    public const string Version = "v1.0.3";   // 显示在标题栏, 方便确认是否为最新修复版
     private const int MinThumb = 64, MaxThumb = 256, SrcThumb = 256, Pad = 10;
     private int _thumb = 132;
     private const string GameDefault =
@@ -27,10 +27,9 @@ public class MainForm : Form
         Dock = DockStyle.Fill, BackColor = Theme.FlowBg, Padding = new Padding(10)
     };
     private readonly Panel _leftPanel = new() { Dock = DockStyle.Left, Width = 210, BackColor = Theme.Bar, Visible = false };
-    private readonly FlowLayoutPanel _heroList = new()
+    private readonly SideListFlow _heroList = new()
     {
-        Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false,
-        AutoScroll = true, BackColor = Theme.Bar, Padding = new Padding(4, 4, 4, 4)
+        Dock = DockStyle.Fill, BackColor = Theme.Bar, Padding = new Padding(4, 4, 4, 4)
     };
     private readonly Label _status = new()
     {

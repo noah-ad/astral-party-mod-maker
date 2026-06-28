@@ -16,6 +16,7 @@ public class MainForm : Form
     private int _loadSeq;                 // 防角色快速切换时旧加载继续填充
     private Button _selHeroBtn;
 
+    public const string Version = "v1.0.2";   // 显示在标题栏, 方便确认是否为最新修复版
     private const int MinThumb = 64, MaxThumb = 256, SrcThumb = 256, Pad = 10;
     private int _thumb = 132;
     private const string GameDefault =
@@ -40,9 +41,9 @@ public class MainForm : Form
     public MainForm(string initFolder = null)
     {
         _initFolder = initFolder;
-        Text = "吉星立绘 Mod 制作器";
+        Text = "吉星立绘 Mod 制作器  " + Version;
         Width = 1200; Height = 800;
-        MinimumSize = new Size(820, 560);
+        MinimumSize = new Size(660, 480);   // 放小: 200%缩放的小屏笔记本也能完整放下/自由缩放
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Bg;
         Font = Theme.UI(9f);

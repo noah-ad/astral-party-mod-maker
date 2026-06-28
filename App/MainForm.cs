@@ -21,9 +21,9 @@ public class MainForm : Form
     private const string GameDefault =
         "D:/steam/steamapps/common/Astral Party/8vJXn6CN/AstralParty_CN_Data/StreamingAssets/aa/StandaloneWindows64";
 
-    private readonly FlowLayoutPanel _flow = new()
+    private readonly GridFlow _flow = new()
     {
-        Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.FlowBg, Padding = new Padding(10)
+        Dock = DockStyle.Fill, BackColor = Theme.FlowBg, Padding = new Padding(10)
     };
     private readonly Panel _leftPanel = new() { Dock = DockStyle.Left, Width = 210, BackColor = Theme.Bar, Visible = false };
     private readonly FlowLayoutPanel _heroList = new()
@@ -86,12 +86,7 @@ public class MainForm : Form
         Controls.Add(topBar);
 
         _flow.MouseWheel += OnFlowWheel;
-        // 窗口/视口变化时, 让分组标题宽度自适应, 避免撑出横向滚动条、卡片不换行
-        _flow.ClientSizeChanged += (_, _) =>
-        {
-            foreach (Control c in _flow.Controls)
-                if (c is Panel hp && (hp.Tag as string) == "header") hp.Width = HeaderWidth();
-        };
+        // 分组标题宽度自适应由 GridFlow.OnLayout 统一处理(每次布局前缩到客户区宽), 避免撑出横向滚动条
     }
 
     protected override void OnShown(EventArgs e)
@@ -319,7 +314,8 @@ public class MainForm : Form
         }
     }
 
-    private int HeaderWidth() => Math.Max(180, _flow.ClientSize.Width - 28);
+    // 初始宽度(布局前的占位); 实际宽度由 GridFlow.OnLayout 按客户区精确校正
+    private int HeaderWidth() => Math.Max(80, _flow.ClientSize.Width - _flow.Padding.Horizontal - 12);
 
     /// <summary>添加一个撑满整行的皮肤分组标题。</summary>
     private void AddHeader(string title)

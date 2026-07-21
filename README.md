@@ -48,11 +48,6 @@ dotnet run -c Release
 
 详见 [`libs/README.txt`](libs/README.txt)。
 
-## ☕ 赞助支持
-
-工具完全免费、永久开源。如果它帮你省了事，欢迎请作者喝杯奶茶（完全自愿，绝不影响任何功能）：
-
-<img src="assets/sponsor_wechat.png" width="260" alt="微信赞助码">
 
 > ⚠️ 本工具只在本 GitHub 仓库免费发布。请勿从任何第三方渠道付费购买，谨防上当受骗。
 

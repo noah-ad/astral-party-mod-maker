@@ -37,8 +37,9 @@ public class IndexService
     /// <summary>扫描 gameDir, 返回索引。heroOnly=true 只收角色立绘+手牌。</summary>
     public GameIndex Build(string gameDir, Action<int, int> progress = null, bool heroOnly = true)
     {
+        gameDir = ResourceLocator.NormalizeGameDirectory(gameDir);
         var idx = new GameIndex { GameDir = gameDir, BuiltAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), HeroOnly = heroOnly };
-        var bundles = Directory.GetFiles(gameDir, "*.bundle");
+        var bundles = ResourceLocator.EnumerateResourceFiles(gameDir);
 
         var am = new AssetsManager();
         if (File.Exists(_tpk)) am.LoadClassPackage(_tpk);
@@ -54,7 +55,7 @@ public class IndexService
                 if (!dbLoaded && am.ClassPackage != null)
                 { am.LoadClassDatabaseFromPackage(afile.file.Metadata.UnityVersion); dbLoaded = true; }
 
-                string bundleName = Path.GetFileName(b);
+                string bundleName = ResourceLocator.RelativePath(gameDir, b);
                 foreach (var info in afile.file.GetAssetsOfType(AssetClassID.Texture2D))
                 {
                     var bf = am.GetBaseField(afile, info);
@@ -74,7 +75,7 @@ public class IndexService
             catch { }
             finally { try { am.UnloadAll(false); } catch { } }
 
-            progress?.Invoke(++done, bundles.Length);
+            progress?.Invoke(++done, bundles.Count);
         }
         try { am.UnloadAll(); } catch { }
         return idx;
@@ -84,6 +85,7 @@ public class IndexService
 
     public static string CachePath(string gameDir, bool heroOnly = true)
     {
+        gameDir = ResourceLocator.NormalizeGameDirectory(gameDir);
         string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JixModMaker");
         Directory.CreateDirectory(dir);
         string h = Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(gameDir.ToLowerInvariant())))[..8];
@@ -94,9 +96,16 @@ public class IndexService
 
     public GameIndex Load(string gameDir, bool heroOnly = true)
     {
+        gameDir = ResourceLocator.NormalizeGameDirectory(gameDir);
         var p = CachePath(gameDir, heroOnly);
         if (!File.Exists(p)) return null;
-        try { return JsonSerializer.Deserialize<GameIndex>(File.ReadAllText(p)); }
+        try
+        {
+            var index = JsonSerializer.Deserialize<GameIndex>(File.ReadAllText(p));
+            if (ResourceLocator.HasWrappedResources(gameDir) && (index == null || index.Items.Count == 0))
+                return null;
+            return index;
+        }
         catch { return null; }
     }
 }

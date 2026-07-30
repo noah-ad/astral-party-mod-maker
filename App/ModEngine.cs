@@ -132,8 +132,8 @@ public class ModEngine
         // 1. 首次修改该 bundle 时自动备份原始文件
         if (!string.IsNullOrEmpty(backupDir))
         {
-            Directory.CreateDirectory(backupDir);
-            string backup = Path.Combine(backupDir, Path.GetFileName(bundlePath));
+            string backup = ResourceLocator.BackupPath(bundlePath, backupDir);
+            Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
             if (!File.Exists(backup)) File.Copy(bundlePath, backup);
         }
 
@@ -190,7 +190,7 @@ public class ModEngine
     /// <summary>从备份还原一个 bundle。</summary>
     public bool RestoreFromBackup(string bundlePath, string backupDir)
     {
-        string backup = Path.Combine(backupDir, Path.GetFileName(bundlePath));
+        string backup = ResourceLocator.BackupPath(bundlePath, backupDir);
         if (!File.Exists(backup)) return false;
         File.Copy(backup, bundlePath, true);
         return true;

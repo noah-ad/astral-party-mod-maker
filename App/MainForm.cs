@@ -16,7 +16,7 @@ public class MainForm : Form
     private int _loadSeq;                 // 防角色快速切换时旧加载继续填充
     private Button _selHeroBtn;
 
-    public const string Version = "v1.0.4";   // 显示在标题栏, 方便确认是否为最新修复版
+    public const string Version = "v1.0.5";   // 显示在标题栏, 方便确认是否为最新修复版
     // 以下均为 96DPI(100%缩放) 下的"设计像素", 运行时用 Sc() 按系统缩放放大
     private const int MinThumb = 64, MaxThumb = 256, SrcThumb = 256, Pad = 10, ThumbDef = 132;
     private int _thumb = ThumbDef;
@@ -158,7 +158,8 @@ public class MainForm : Form
         if (!string.IsNullOrEmpty(_initFolder) && Directory.Exists(_initFolder))
         {
             SetFolder(_initFolder);
-            if (_initFolder.Replace('\\', '/').Contains("StandaloneWindows64"))
+            if (_initFolder.Replace('\\', '/').Contains("StandaloneWindows64")
+                || ResourceLocator.HasWrappedResources(_initFolder))
             { _leftPanel.Visible = true; LoadIndexAsync(); }
             else { _leftPanel.Visible = false; ShowFolderTextures(); }
         }
@@ -166,7 +167,7 @@ public class MainForm : Form
 
     private void SetFolder(string path)
     {
-        _folder = path;
+        _folder = ResourceLocator.NormalizeGameDirectory(path);
         _backupDir = Path.Combine(_folder, "_原始备份");
         _ws = PackService.LoadWorkspace(_folder);
     }
@@ -323,9 +324,9 @@ public class MainForm : Form
     private async void ShowFolderTextures()
     {
         _flow.Controls.Clear();
-        var bundles = Directory.GetFiles(_folder, "*.bundle");
-        if (bundles.Length == 0) { _status.Text = "该文件夹下没有 .bundle 文件"; return; }
-        _status.Text = $"扫描中… 共 {bundles.Length} 个 bundle";
+        var bundles = ResourceLocator.EnumerateResourceFiles(_folder);
+        if (bundles.Count == 0) { _status.Text = "该文件夹下没有可识别的资源文件"; return; }
+        _status.Text = $"扫描中… 共 {bundles.Count} 个资源文件";
 
         var texs = await Task.Run(() =>
         {
@@ -337,7 +338,7 @@ public class MainForm : Form
             return list;
         });
         foreach (var t in texs)
-            t.Modded = PackService.Contains(_ws, Path.GetFileName(t.BundlePath), t.PathId);
+            t.Modded = PackService.Contains(_ws, ResourceLocator.RelativePath(_folder, t.BundlePath), t.PathId);
         ShowSections(new List<(string, List<TexRef>)> { ("", texs) });
     }
 
@@ -526,7 +527,7 @@ public class MainForm : Form
 
             PackService.Upsert(_ws, new ModEntry
             {
-                Bundle = Path.GetFileName(tex.BundlePath), PathId = tex.PathId,
+                Bundle = ResourceLocator.RelativePath(_folder, tex.BundlePath), PathId = tex.PathId,
                 TextureName = tex.Name, Width = tex.Width, Height = tex.Height
             });
             PackService.SaveWorkspace(_folder, _ws);
@@ -602,8 +603,9 @@ public class MainForm : Form
                 res = PackService.Import(dlg.FileName, _folder, _engine, _backupDir, _ws);
 
             PackService.SaveWorkspace(_folder, _ws);
-            string msg = $"图包「{res.PackName}」应用完成：\n\n成功替换 {res.Applied} 张";
+            string msg = $"图包「{res.PackName}」应用完成：\n\n成功匹配 {res.Applied} 张，写入 {res.Targets} 个位置";
             if (res.Missing > 0) msg += $"\n{res.Missing} 张未匹配（当前目录里没有对应立绘）";
+            if (res.Missing > 0) msg += "\n\n可切换到另一个资源目录，再导入同一个图包继续覆盖。";
             MessageBox.Show(msg, "导入完成");
             if (_selHeroBtn != null) _selHeroBtn.PerformClick(); else ShowFolderTextures();
         }
@@ -645,9 +647,18 @@ public class MainForm : Form
             string target = Path.Combine(_folder, Path.GetFileName(b));
             if (File.Exists(target)) { File.Copy(b, target, true); n++; }
         }
+        string wrappedRoot = Path.Combine(_backupDir, "__wrapped__");
+        if (Directory.Exists(wrappedRoot))
+        {
+            foreach (var b in Directory.GetFiles(wrappedRoot, "__data", SearchOption.AllDirectories))
+            {
+                string target = Path.Combine(_folder, Path.GetRelativePath(wrappedRoot, b));
+                if (ResourceLocator.IsWrappedData(target)) { File.Copy(b, target, true); n++; }
+            }
+        }
         _ws = new ModManifest();
         PackService.SaveWorkspace(_folder, _ws);
-        _status.Text = $"已还原 {n} 个 bundle";
+        _status.Text = $"已还原 {n} 个资源文件";
         if (_selHeroBtn != null) _selHeroBtn.PerformClick(); else ShowFolderTextures();
     }
 

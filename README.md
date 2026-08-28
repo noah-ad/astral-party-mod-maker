@@ -2,7 +2,19 @@
 
 面向《吉星派对 / Astral Party》的 Windows 图形化 Mod 制作工具。它可以自动定位游戏资源，浏览、预览和替换贴图，并把作品导出为 `.jxpack` 图包或 Bundle ZIP。
 
+[![Latest Release](https://img.shields.io/github/v/release/noah-ad/astral-party-mod-maker?display_name=tag&label=最新版本&color=ff5fa2)](https://github.com/noah-ad/astral-party-mod-maker/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/noah-ad/astral-party-mod-maker/total?label=累计下载&color=55c8e8)](https://github.com/noah-ad/astral-party-mod-maker/releases)
+
 > Unity 2021.3 + Addressables / C# / .NET 8 / WinForms / Windows only
+
+## 下载
+
+当前版本：**v2.1.0**
+
+- [下载最新版 Win64 免安装包](https://github.com/noah-ad/astral-party-mod-maker/releases/latest/download/AstralPartyModMaker-v2.1.0-win64.zip)
+- [查看全部版本与更新说明](https://github.com/noah-ad/astral-party-mod-maker/releases)
+
+下载 ZIP 后完整解压，双击 `启动 吉星Mod制作器.bat` 或 `JixModMaker.exe`。发行包已包含 .NET 8 运行环境，无需另外安装 SDK 或 Desktop Runtime。
 
 ## 功能
 
@@ -33,7 +45,7 @@ dotnet run -c Release
 
 第三方依赖已放在 [`libs/`](libs/) 目录（见 [libs/README.txt](libs/README.txt) 说明来源与协议），clone 后可直接编译，无需额外准备。
 
-运行需要 Windows + .NET 8 Desktop Runtime（`dotnet publish -c Release -r win-x64 --self-contained true` 可打出免安装运行时的发布包）。
+源码运行需要 Windows + .NET 8 Desktop Runtime（`dotnet publish -c Release -r win-x64 --self-contained true` 可打出免安装运行时的发布包）。普通用户直接下载上面的发行包即可。
 
 ## 使用
 

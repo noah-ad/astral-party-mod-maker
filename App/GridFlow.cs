@@ -13,6 +13,9 @@ public sealed class GridFlow : FlowLayoutPanel
 {
     public GridFlow()
     {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        DoubleBuffered = true;
         AutoScroll = true;
         WrapContents = true;
     }
@@ -30,14 +33,45 @@ public sealed class GridFlow : FlowLayoutPanel
     protected override void OnLayout(LayoutEventArgs e)
     {
         int inner = InnerWidth();
+        Control previousGridItem = null;
+        int rowWidth = 0;
         foreach (Control c in Controls)
         {
-            if ((c.Tag as string) != "header") continue;
-            int target = inner - c.Margin.Horizontal;
-            if (target < 80) target = 80;
-            if (c.Width != target) c.Width = target;   // 在 base 布局前改好, 让换行按正确宽度计算
+            var tag = c.Tag as string;
+            bool fullRow = tag is "header" or "load_more" or "page_card";
+            if (fullRow)
+            {
+                if (previousGridItem != null && !GetFlowBreak(previousGridItem))
+                    SetFlowBreak(previousGridItem, true);
+                int target = Math.Max(80, inner - c.Margin.Horizontal);
+                if (c.Width != target) c.Width = target;
+                if (!GetFlowBreak(c)) SetFlowBreak(c, true);
+                previousGridItem = null;
+                rowWidth = 0;
+                continue;
+            }
+
+            int itemWidth = c.Width + c.Margin.Horizontal;
+            if (previousGridItem != null && rowWidth + itemWidth > inner)
+            {
+                if (!GetFlowBreak(previousGridItem)) SetFlowBreak(previousGridItem, true);
+                rowWidth = 0;
+            }
+            else if (previousGridItem != null && GetFlowBreak(previousGridItem))
+            {
+                SetFlowBreak(previousGridItem, false);
+            }
+            rowWidth += itemWidth;
+            previousGridItem = c;
         }
+        if (previousGridItem != null && !GetFlowBreak(previousGridItem))
+            SetFlowBreak(previousGridItem, true);
         base.OnLayout(e);
+        if (HorizontalScroll.Visible)
+        {
+            HorizontalScroll.Value = 0;
+            HorizontalScroll.Visible = false;
+        }
     }
 }
 
@@ -49,6 +83,9 @@ public sealed class SideListFlow : FlowLayoutPanel
 {
     public SideListFlow()
     {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        DoubleBuffered = true;
         AutoScroll = true;
         WrapContents = false;
         FlowDirection = FlowDirection.TopDown;

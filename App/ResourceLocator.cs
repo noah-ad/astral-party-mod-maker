@@ -10,8 +10,15 @@ public static class ResourceLocator
         {
             for (var current = new DirectoryInfo(Path.GetFullPath(path)); current != null; current = current.Parent)
             {
+                if (File.Exists(Path.Combine(current.FullName, "__info"))
+                    && string.Equals(current.Parent?.Name, "AssetBundles", StringComparison.OrdinalIgnoreCase))
+                    return current.Parent.FullName;
+
                 if (string.Equals(current.Name, "AssetBundles", StringComparison.OrdinalIgnoreCase)
-                    && File.Exists(Path.Combine(current.FullName, "__info")))
+                    && (File.Exists(Path.Combine(current.FullName, "__info"))
+                        || Directory.EnumerateDirectories(current.FullName)
+                            .Take(32)
+                            .Any(child => File.Exists(Path.Combine(child, "__info")))))
                     return current.FullName;
             }
         }
@@ -50,10 +57,10 @@ public static class ResourceLocator
     public static string RelativePath(string root, string resourcePath)
         => Path.GetRelativePath(NormalizeGameDirectory(root), resourcePath);
 
-    public static string BackupPath(string resourcePath, string backupDir)
+    public static string BackupPath(string resourcePath, string backupDir, string backupName = null)
     {
         if (!IsWrappedData(resourcePath))
-            return Path.Combine(backupDir, Path.GetFileName(resourcePath));
+            return Path.Combine(backupDir, ModEngine.SafeBackupName(backupName ?? Path.GetFileName(resourcePath)));
 
         var gameRoot = Directory.GetParent(backupDir)?.FullName;
         if (string.IsNullOrWhiteSpace(gameRoot))

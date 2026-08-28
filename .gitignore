@@ -12,6 +12,11 @@ Probe/
 启动工具.bat
 *.png
 !assets/*.png
+!App/Assets/
+!App/Assets/app_icon.png
+
+# 本地参考程序（仅供 UI / 行为对照，不属于本项目）
+JiXingModHelper-win64/
 
 # 游戏资源 (版权所有，禁止上传)
 *.bundle

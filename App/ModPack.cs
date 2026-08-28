@@ -78,7 +78,17 @@ public static class PackService
     }
 
     public static bool Contains(ModManifest ws, string bundleName, long pathId)
-        => ws.Entries.Any(e => e.Bundle == bundleName && e.PathId == pathId);
+        => Contains(ws, bundleName, pathId, null);
+
+    public static bool Contains(ModManifest ws, string bundleName, long pathId, string textureName)
+    {
+        if (ws?.Entries == null) return false;
+        return ws.Entries.Any(e =>
+            string.Equals(e.Bundle, bundleName, StringComparison.OrdinalIgnoreCase)
+            && (pathId > 0 && e.PathId == pathId
+                || pathId == 0 && !string.IsNullOrWhiteSpace(textureName)
+                && string.Equals(e.TextureName, textureName, StringComparison.Ordinal)));
+    }
 
     // ---------- 导出图包 ----------
 
@@ -240,14 +250,8 @@ public static class PackService
     public static ImportResult ImportV2(string packPath, GameIndex gameIndex, string gameDir,
                                         ModEngine engine, string backupDir, ModManifest workspace)
     {
-        var exactNames = gameIndex.Items
-            .Where(item => !string.IsNullOrWhiteSpace(item.Name))
-            .GroupBy(item => item.Name, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.Ordinal);
-        var looseNames = gameIndex.Items
-            .Where(item => !string.IsNullOrWhiteSpace(item.Name))
-            .GroupBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
+        gameDir = ResourceLocator.NormalizeGameDirectory(gameDir);
+        var byName = BuildTextureTargetMap(gameIndex);
 
         using var zip = ZipFile.OpenRead(packPath);
         var manEntry = zip.GetEntry("manifest.json") ?? throw new Exception("图包损坏: 缺少 manifest.json");
@@ -262,7 +266,16 @@ public static class PackService
             try
             {
                 var imgEntry = FindImageEntry(zip, e.Image);
-                var targets = FindTargets(e, gameIndex, exactNames, looseNames)
+                List<TexIndexEntry> targets;
+                if (!string.IsNullOrWhiteSpace(e.TextureName) && byName.TryGetValue(e.TextureName, out var namedTargets))
+                    targets = namedTargets;
+                else if (!string.IsNullOrWhiteSpace(e.Bundle))
+                    targets = gameIndex.Items.Where(candidate => candidate.PathId == e.PathId
+                        && string.Equals(candidate.Bundle, e.Bundle, StringComparison.OrdinalIgnoreCase)).ToList();
+                else
+                    targets = new List<TexIndexEntry>();
+
+                targets = targets
                     .GroupBy(target => $"{target.Bundle}\0{target.PathId}", StringComparer.OrdinalIgnoreCase)
                     .Select(group => group.First())
                     .ToList();
@@ -276,15 +289,30 @@ public static class PackService
                 bool any = false;
                 foreach (var t in targets)
                 {
-                    string bundlePath = Path.Combine(gameDir, t.Bundle);
+                    string bundlePath = !string.IsNullOrWhiteSpace(t.BundlePath)
+                        ? t.BundlePath
+                        : Path.Combine(gameDir, t.Bundle);
                     if (!File.Exists(bundlePath)) continue;
+                    long pathId = t.PathId;
+                    int width = t.Width;
+                    int height = t.Height;
+                    if (pathId == 0)
+                    {
+                        var hydrated = engine.FindTextureByName(bundlePath, e.TextureName);
+                        if (hydrated == null) continue;
+                        pathId = hydrated.PathId;
+                        width = hydrated.Width;
+                        height = hydrated.Height;
+                    }
                     try
                     {
-                        engine.ReplaceInPlaceFromBytes(bundlePath, t.PathId, png, backupDir);
+                        engine.ReplaceInPlaceFromBytes(bundlePath, pathId, png, backupDir, t.Bundle);
                         Upsert(workspace, new ModEntry
                         {
-                            Bundle = t.Bundle, PathId = t.PathId, TextureName = e.TextureName,
-                            Width = e.Width, Height = e.Height, Label = e.Label
+                            Bundle = t.Bundle, PathId = pathId, TextureName = e.TextureName,
+                            Width = e.Width > 0 ? e.Width : width,
+                            Height = e.Height > 0 ? e.Height : height,
+                            Label = e.Label
                         });
                         any = true;
                         res.Targets++;
@@ -309,22 +337,46 @@ public static class PackService
                 || string.Equals(entry.FullName, normalized, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static IEnumerable<TexIndexEntry> FindTargets(
-        ModEntry entry,
-        GameIndex gameIndex,
-        IReadOnlyDictionary<string, List<TexIndexEntry>> exactNames,
-        IReadOnlyDictionary<string, List<TexIndexEntry>> looseNames)
+    private static Dictionary<string, List<TexIndexEntry>> BuildTextureTargetMap(GameIndex gameIndex)
     {
-        if (!string.IsNullOrWhiteSpace(entry.TextureName))
+        var byName = new Dictionary<string, List<TexIndexEntry>>(StringComparer.OrdinalIgnoreCase);
+        if (gameIndex == null) return byName;
+
+        if (gameIndex.Lightweight)
         {
-            if (exactNames.TryGetValue(entry.TextureName, out var exact)) return exact;
-            if (looseNames.TryGetValue(entry.TextureName, out var loose)) return loose;
-            return Array.Empty<TexIndexEntry>();
+            foreach (var pair in gameIndex.TextureNamesByBundle)
+            {
+                string bundlePath = "";
+                string source = "";
+                gameIndex.BundlePathsByName?.TryGetValue(pair.Key, out bundlePath);
+                gameIndex.BundleSourcesByName?.TryGetValue(pair.Key, out source);
+                foreach (var name in pair.Value ?? new List<string>())
+                    AddTarget(byName, new TexIndexEntry
+                    {
+                        Bundle = pair.Key,
+                        BundlePath = bundlePath,
+                        Source = source,
+                        PathId = 0,
+                        Name = name,
+                        Kind = ResourceKinds.Texture
+                    });
+            }
+            return byName;
         }
 
-        if (string.IsNullOrWhiteSpace(entry.Bundle)) return Array.Empty<TexIndexEntry>();
-        return gameIndex.Items.Where(candidate =>
-            candidate.PathId == entry.PathId
-            && string.Equals(candidate.Bundle, entry.Bundle, StringComparison.OrdinalIgnoreCase));
+        foreach (var target in gameIndex.Items.Where(i => i.Kind == ResourceKinds.Texture))
+            AddTarget(byName, target);
+        return byName;
+    }
+
+    private static void AddTarget(Dictionary<string, List<TexIndexEntry>> byName, TexIndexEntry target)
+    {
+        if (string.IsNullOrWhiteSpace(target.Name)) return;
+        if (!byName.TryGetValue(target.Name, out var list))
+        {
+            list = new List<TexIndexEntry>();
+            byName[target.Name] = list;
+        }
+        list.Add(target);
     }
 }

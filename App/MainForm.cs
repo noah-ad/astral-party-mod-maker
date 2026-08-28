@@ -37,7 +37,7 @@ public class MainForm : Form
     private bool _appendingRows;
     private bool _loadMoreCheckQueued;
 
-    public const string Version = "v2.1.0";
+    public const string Version = "v2.1.1";
     private const string PageDashboard = "dashboard";
     private const string PageBrowse = "browse";
     private const string PagePack = "pack";

@@ -9,9 +9,9 @@
 
 ## 下载
 
-当前版本：**v2.1.0**
+当前版本：**v2.1.1**
 
-- [下载最新版 Win64 免安装包](https://github.com/noah-ad/astral-party-mod-maker/releases/latest/download/AstralPartyModMaker-v2.1.0-win64.zip)
+- [下载最新版 Win64 免安装包](https://github.com/noah-ad/astral-party-mod-maker/releases/latest/download/AstralPartyModMaker-v2.1.1-win64.zip)
 - [查看全部版本与更新说明](https://github.com/noah-ad/astral-party-mod-maker/releases)
 
 下载 ZIP 后完整解压，双击 `启动 吉星Mod制作器.bat` 或 `JixModMaker.exe`。发行包已包含 .NET 8 运行环境，无需另外安装 SDK 或 Desktop Runtime。

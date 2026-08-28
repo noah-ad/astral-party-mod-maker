@@ -35,6 +35,7 @@ public class MainForm : Form
     private int _lastBrowseBatchSize;
     private string _lastSectionTitle = "";
     private bool _appendingRows;
+    private bool _loadMoreCheckQueued;
 
     public const string Version = "v2.1.0";
     private const string PageDashboard = "dashboard";
@@ -147,7 +148,8 @@ public class MainForm : Form
         Controls.Add(bottomBar);
 
         _flow.MouseWheel += OnFlowWheel;
-        _flow.Scroll += (_, _) => MaybeLoadMoreResources();
+        _flow.Scroll += (_, _) => QueueLoadMoreCheck();
+        _flow.Resize += (_, _) => QueueLoadMoreCheck();
 
         if (!string.IsNullOrWhiteSpace(initFolder) && Directory.Exists(initFolder))
         {
@@ -1730,8 +1732,8 @@ public class MainForm : Form
             _status.Text = $"已显示 {_browseLoadedCount}/{_browseTotalCount} 项，继续向下滚动自动加载";
 
         _ = LoadThumbnailsAsync(seq, thumbnailCards);
-        if (reset && IsHandleCreated)
-            BeginInvoke(MaybeLoadMoreResources);
+        if (reset)
+            QueueLoadMoreCheck();
         await Task.Yield();
     }
 
@@ -1779,15 +1781,37 @@ public class MainForm : Form
             Width = HeaderWidth(),
             Height = Sc(42),
             Margin = new Padding(Sc(6), Sc(10), Sc(6), Sc(12)),
-            BackColor = Theme.FlowBg
+            BackColor = Theme.FlowBg,
+            Cursor = Cursors.Hand
         };
-        var label = Theme.Caption($"已显示 {_browseLoadedCount}/{_browseTotalCount}，继续向下滚动加载更多");
+        var label = Theme.Caption($"已显示 {_browseLoadedCount}/{_browseTotalCount}，继续向下滚动自动加载 · 点击立即加载");
         label.Dock = DockStyle.Fill;
         label.ForeColor = Theme.SubText;
         label.TextAlign = ContentAlignment.MiddleCenter;
+        label.Cursor = Cursors.Hand;
+        panel.Click += (_, _) => AppendMoreResources();
+        label.Click += (_, _) => AppendMoreResources();
         panel.Controls.Add(label);
         _flow.Controls.Add(panel);
         _flow.SetFlowBreak(panel, true);
+    }
+
+    private void QueueLoadMoreCheck()
+    {
+        if (_loadMoreCheckQueued || !IsHandleCreated || IsDisposed) return;
+        _loadMoreCheckQueued = true;
+        try
+        {
+            BeginInvoke((Action)(() =>
+            {
+                _loadMoreCheckQueued = false;
+                MaybeLoadMoreResources();
+            }));
+        }
+        catch (InvalidOperationException)
+        {
+            _loadMoreCheckQueued = false;
+        }
     }
 
     private void MaybeLoadMoreResources()
@@ -1796,9 +1820,15 @@ public class MainForm : Form
         if (_browseLoadedCount <= 0 || _browseLoadedCount >= _browseTotalCount || _lastBrowseBatchSize <= 0) return;
 
         bool needFill = !_flow.VerticalScroll.Visible;
-        int bottom = _flow.VerticalScroll.Value + _flow.ClientSize.Height;
-        bool nearBottom = bottom >= _flow.VerticalScroll.Maximum - Sc(520);
-        if (!needFill && !nearBottom) return;
+        int lastScrollValue = Math.Max(0,
+            _flow.VerticalScroll.Maximum - _flow.VerticalScroll.LargeChange + 1);
+        bool nearBottom = _flow.VerticalScroll.Value >= Math.Max(0, lastScrollValue - Sc(520));
+        var hint = _flow.Controls.Cast<Control>()
+            .FirstOrDefault(c => string.Equals(c.Tag as string, "load_more", StringComparison.Ordinal));
+        bool hintVisible = hint != null && hint.Visible
+            && hint.RectangleToScreen(hint.ClientRectangle)
+                .IntersectsWith(_flow.RectangleToScreen(_flow.ClientRectangle));
+        if (!needFill && !nearBottom && !hintVisible) return;
 
         AppendMoreResources();
     }
@@ -1841,8 +1871,7 @@ public class MainForm : Form
             _appendingRows = false;
         }
 
-        if (IsHandleCreated)
-            BeginInvoke(MaybeLoadMoreResources);
+        QueueLoadMoreCheck();
     }
 
     private void ShowResourceList(List<(string title, List<TexRef> assets)> sections, int total, int cap)
@@ -2329,7 +2358,11 @@ public class MainForm : Form
 
     private void OnFlowWheel(object sender, MouseEventArgs e)
     {
-        if ((ModifierKeys & Keys.Control) == 0) return;
+        if ((ModifierKeys & Keys.Control) == 0)
+        {
+            QueueLoadMoreCheck();
+            return;
+        }
         if (e is HandledMouseEventArgs he) he.Handled = true;
         int next = Math.Clamp(_thumb + (e.Delta > 0 ? Sc(14) : -Sc(14)), Sc(MinThumb), Sc(MaxThumb));
         if (next == _thumb) return;

@@ -33,6 +33,7 @@ public class GameIndex
     public string HotDir { get; set; }
     public string BuiltAt { get; set; }
     public string SourceStamp { get; set; }
+    public Dictionary<string, string> BundleStamps { get; set; } = new();
     public bool HeroOnly { get; set; } = true;
     public bool IncludeHotCache { get; set; }
     public bool Recursive { get; set; }
@@ -191,7 +192,7 @@ public class GameIndex
 public class IndexService
 {
     private readonly ModEngine _engine = new();
-    private const string CacheVersion = "v6";
+    private const string CacheVersion = "v7";
     private static readonly TimeSpan HotCacheTtl = TimeSpan.FromHours(12);
 
     public sealed class BundleScanEntry
@@ -220,9 +221,20 @@ public class IndexService
         var bundles = EnumerateBundleEntries(gameDir, includeHotCache, recursive).ToList();
         idx.SourceStamp = ComputeStamp(bundles);
         int done = 0;
+        GameIndex previous = null;
+        try { previous = JsonSerializer.Deserialize<GameIndex>(File.ReadAllText(CachePath(gameDir, heroOnly, includeHotCache, recursive))); } catch { }
+        var oldRows = previous?.Items.GroupBy(x => x.Bundle).ToDictionary(g => g.Key, g => g.ToList());
 
         foreach (var b in bundles)
         {
+            string stamp = $"{b.Path}|{b.Length}|{b.LastWriteTicks}";
+            if (!includeAdvancedTypes && previous?.BundleStamps?.GetValueOrDefault(b.Name) == stamp)
+            {
+                if (oldRows.TryGetValue(b.Name, out var reused)) idx.Items.AddRange(reused);
+                idx.BundleStamps[b.Name] = stamp;
+                progress?.Invoke(++done, bundles.Count);
+                continue;
+            }
             try
             {
                 var assets = includeAdvancedTypes ? _engine.ListAssets(b.Path) : _engine.ListTextureHeaders(b.Path);
@@ -253,6 +265,7 @@ public class IndexService
                         Height = asset.Height
                     });
                 }
+                idx.BundleStamps[b.Name] = stamp;
             }
             catch { }
 
@@ -315,7 +328,7 @@ public class IndexService
         var hot = HotCacheDir();
         if (!Directory.Exists(hot)) yield break;
 
-        var cached = TryLoadHotDataCache(hot);
+        List<string> cached = null;
         if (cached == null)
         {
             cached = Directory.GetFiles(hot, "__data", SearchOption.AllDirectories).ToList();
@@ -365,7 +378,10 @@ public class IndexService
     }
 
     private static BundleScanEntry MakeBundleEntry(string logical, string path, string source)
-        => new() { Name = logical, Path = path, Source = source };
+    {
+        var info = new FileInfo(path);
+        return new() { Name = logical, Path = path, Source = source, Length = info.Length, LastWriteTicks = info.LastWriteTimeUtc.Ticks };
+    }
 
     public static string ComputeSourceStamp(string gameDir, bool includeHotCache, bool recursive)
         => ComputeStamp(EnumerateBundleEntries(gameDir, includeHotCache, recursive));
@@ -374,7 +390,7 @@ public class IndexService
     {
         var sb = new StringBuilder();
         foreach (var b in bundles.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
-            sb.Append(b.Name).Append('|').Append(b.Path).Append('\n');
+            sb.Append(b.Name).Append('|').Append(b.Path).Append('|').Append(b.Length).Append('|').Append(b.LastWriteTicks).Append('\n');
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
     }
 
@@ -405,22 +421,7 @@ public class IndexService
     {
         gameDir = ResourceLocator.NormalizeGameDirectory(gameDir);
         var cached = TryLoadSavedIndex(gameDir, heroOnly, includeHotCache, recursive);
-        if (!heroOnly && cached?.Lightweight == true)
-            return cached;
-
-        if (!heroOnly)
-        {
-            var preferred = LoadReferenceTextureIndex(gameDir, includeHotCache, recursive, heroOnly);
-            if (preferred != null)
-            {
-                try { Save(preferred); } catch { }
-                return preferred;
-            }
-        }
-
-        if (cached != null) return cached;
-
-        return LoadReferenceTextureIndex(gameDir, includeHotCache, recursive, heroOnly);
+        return cached;
     }
 
     private GameIndex TryLoadSavedIndex(string gameDir, bool heroOnly, bool includeHotCache, bool recursive)
@@ -431,8 +432,8 @@ public class IndexService
         {
             var idx = JsonSerializer.Deserialize<GameIndex>(File.ReadAllText(p));
             if (idx == null) return null;
-            if (ResourceLocator.HasWrappedResources(gameDir)
-                && (idx.Lightweight ? idx.LightweightTextureCount == 0 : idx.Items.Count == 0))
+            if ((idx.Lightweight ? idx.LightweightTextureCount == 0 : idx.Items.Count == 0)
+                && ResourceLocator.HasWrappedResources(gameDir))
                 return null;
             bool validShape = idx.Lightweight
                 ? idx.TextureNamesByBundle != null && idx.BundlePathsByName != null && idx.TextureRefsByCategory != null

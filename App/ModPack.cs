@@ -14,6 +14,7 @@ public class ModEntry
     public int Height { get; set; }
     public string Label { get; set; }          // 备注/角色名 (可选)
     public string Image { get; set; }          // 包内图片路径 (仅图包用)
+    public DateTimeOffset? ModifiedAt { get; set; }
 }
 
 /// <summary>迁移/导出时一张待打包的图 (内存中)。</summary>
@@ -73,6 +74,7 @@ public static class PackService
 
     public static void Upsert(ModManifest ws, ModEntry e)
     {
+        e.ModifiedAt = DateTimeOffset.UtcNow;
         ws.Entries.RemoveAll(x => x.Bundle == e.Bundle && x.PathId == e.PathId);
         ws.Entries.Add(e);
     }

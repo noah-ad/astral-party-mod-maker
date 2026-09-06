@@ -36,8 +36,13 @@ public class MainForm : Form
     private string _lastSectionTitle = "";
     private bool _appendingRows;
     private bool _loadMoreCheckQueued;
+    private bool _loadingIndex;
+    private bool _advancedCategories;
+    private GameIndex _sortedIndex;
+    private string _sortedKey;
+    private List<TexIndexEntry> _sortedRows;
 
-    public const string Version = "v2.1.1";
+    public const string Version = "v2.2.0";
     private const string PageDashboard = "dashboard";
     private const string PageBrowse = "browse";
     private const string PagePack = "pack";
@@ -1107,12 +1112,16 @@ public class MainForm : Form
 
     private async void LoadIndexAsync(bool rebuild, bool includeAdvancedTypes = false)
     {
+        if (_loadingIndex) return;
         if (_folder == null)
         {
             DetectGame();
             return;
         }
 
+        _loadingIndex = true;
+        try
+        {
         ClearFlow();
         ClearSideList();
         ClearDetails();
@@ -1120,7 +1129,7 @@ public class MainForm : Form
 
         _index = includeAdvancedTypes
             ? null
-            : _indexSvc.Load(_folder, heroOnly: false, includeHotCache: _includeHotCache, recursive: _recursiveFolder);
+            : await Task.Run(() => _indexSvc.Load(_folder, heroOnly: false, includeHotCache: _includeHotCache, recursive: _recursiveFolder));
         if (_index == null)
         {
             string folder = _folder;
@@ -1132,7 +1141,7 @@ public class MainForm : Form
                 if (done % 100 == 0 && IsHandleCreated)
                     BeginInvoke(() => _status.Text = $"扫描资源索引... {done}/{total}");
             }, heroOnly: false, includeHotCache: includeHot, recursive: recursive, includeAdvancedTypes: includeAdvancedTypes));
-            try { _indexSvc.Save(_index); } catch { }
+            try { await Task.Run(() => _indexSvc.Save(_index)); } catch { }
         }
         else
         {
@@ -1143,6 +1152,9 @@ public class MainForm : Form
 
         UpdateDashboard();
         ShowCurrentPage();
+        }
+        catch (Exception ex) { _status.Text = "索引加载失败：" + ex.Message; }
+        finally { _loadingIndex = false; }
     }
 
     private void UpdateDashboard()
@@ -1204,7 +1216,8 @@ public class MainForm : Form
         foreach (var def in defs)
         {
             var count = counts.GetValueOrDefault(def.Id, 0);
-            if (def.Id != ResourceCategories.AllId && count == 0 && def.Advanced) continue;
+            if (def.Id != ResourceCategories.AllId && count == 0) continue;
+            if (!_advancedCategories && (def.Advanced || def.Id == "sprite_anim")) continue;
 
             if (kind == ResourceKinds.Texture && def.Id == ResourceCategories.CharacterId)
             {
@@ -1217,6 +1230,12 @@ public class MainForm : Form
             AddCategoryButton($"{def.Label}  [{count}]", def.Id, null, null, 0, count);
         }
 
+        if (kind == ResourceKinds.Texture)
+        {
+            var advanced = new CheckBox { Text = "动作帧 / 特效 / 其它资源", Checked = _advancedCategories, AutoSize = true, ForeColor = Theme.SubText, Margin = new Padding(8, 14, 4, 8) };
+            advanced.CheckedChanged += (_, _) => { _advancedCategories = advanced.Checked; BuildCategoryList(kind); };
+            _categoryList.Controls.Add(advanced);
+        }
         _categoryList.ResumeLayout();
     }
 
@@ -1446,6 +1465,12 @@ public class MainForm : Form
 
     private List<TexIndexEntry> GetFullIndexRows(string kind, string categoryId, string query, int offset, int cap, out int total)
     {
+        var key = CurrentBrowseKey(kind, categoryId, query);
+        if (ReferenceEquals(_sortedIndex, _index) && _sortedKey == key && _sortedRows != null)
+        {
+            total = _sortedRows.Count;
+            return _sortedRows.Skip(offset).Take(cap).ToList();
+        }
         var filtered = _index.Items
             .Where(i => i.Kind == kind)
             .Where(i => categoryId == ResourceCategories.AllId || string.Equals(i.CategoryId, categoryId, StringComparison.OrdinalIgnoreCase))
@@ -1453,6 +1478,9 @@ public class MainForm : Form
             .Where(i => MatchesHeroFilter(i.Name));
 
         var rows = SortAssetRows(filtered, kind, categoryId);
+        _sortedIndex = _index;
+        _sortedKey = key;
+        _sortedRows = rows;
         total = rows.Count;
         return rows.Skip(offset).Take(cap).ToList();
     }
@@ -2540,7 +2568,9 @@ public class MainForm : Form
             return;
         }
 
-        var assets = _ws.Entries
+        using var selection = new ExportSelectionDialog(_ws.Entries, true);
+        if (selection.ShowDialog(this) != DialogResult.OK) return;
+        var assets = selection.SelectedEntries
             .Select(e =>
             {
                 var indexed = FindAssetForEntry(e);
@@ -2665,13 +2695,15 @@ public class MainForm : Form
             return;
         }
 
+        using var selection = new ExportSelectionDialog(_ws.Entries, false);
+        if (selection.ShowDialog(this) != DialogResult.OK) return;
         using var dlg = new SaveFileDialog { Filter = $"吉星图包|*{PackService.PackExt}", FileName = "我的资源包" + PackService.PackExt };
         if (dlg.ShowDialog() != DialogResult.OK) return;
 
         try
         {
             var images = new List<NamedImage>();
-            foreach (var e in _ws.Entries)
+            foreach (var e in selection.SelectedEntries)
             {
                 var asset = FindAssetForEntry(e);
                 if (asset != null && asset.PathId == 0)

@@ -8,7 +8,7 @@ public class AssetCategory
     public string Series;    // Hero / HandCard / Other
     public string HeroId;    // 角色ID, 如 "101"; 手牌为其编号
     public string Kind;      // Bust / Card / Card2 / ProfilePhoto / RolePhoto / LevelUp / HandCard / ""
-    public string Variant;   // 01 / 02 / Max / ""
+    public string Variant = "";   // 01 / 02 / Max / ""
     public bool Sfw;         // 是否 _sfw 和谐版
     public string Raw;       // 原始名
 
@@ -62,7 +62,7 @@ public static class NameParser
         RegexOptions.Compiled);
     private static readonly Regex HandRe = new(
         @"^UT_HandCard_(?<id>\d+)(?<sfw>_sfw)?$", RegexOptions.Compiled);
-    private static readonly Regex VarRe = new(@"_(?<v>01|02|03|04|05|Max)(?:_|$)", RegexOptions.Compiled);
+    private static readonly Regex VarRe = new(@"_(?<v>\d{2,}|Max)(?:_|$)", RegexOptions.Compiled);
 
     public static AssetCategory Parse(string name)
     {

@@ -42,7 +42,7 @@ public class MainForm : Form
     private string _sortedKey;
     private List<TexIndexEntry> _sortedRows;
 
-    public const string Version = "v2.2.0";
+    public const string Version = "v2.2.1";
     private const string PageDashboard = "dashboard";
     private const string PageBrowse = "browse";
     private const string PagePack = "pack";
@@ -775,7 +775,7 @@ public class MainForm : Form
             MakeButton("导出图包", (_, _) => ExportPack()));
 
         AddPageCard("作品与 bundle",
-            "作品页集中处理分享包和原始 bundle 压缩包。bundle ZIP 会保留 manifest，方便回看每个文件来源。",
+            "ZIP 保留资源原始路径，解压到目标设备对应资源目录即可覆盖。",
             MakeButton("打开作品页", (_, _) => Navigate(PagePack)),
             MakeButton("导出已改Bundle ZIP", (_, _) => ExportModifiedBundlesZip()),
             MakeButton("全部还原", (_, _) => RestoreAll()));
@@ -2608,56 +2608,9 @@ public class MainForm : Form
 
         try
         {
-            if (File.Exists(dlg.FileName)) File.Delete(dlg.FileName);
-            using var zip = ZipFile.Open(dlg.FileName, ZipArchiveMode.Create);
-            var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var records = new List<object>();
-            int originalCount = 0;
-
-            foreach (var asset in bundles)
-            {
-                var currentEntry = UniqueZipName(used, $"current/{SafeFileName(asset.Source ?? "bundle")}/{SafeFileName(asset.BundleName ?? Path.GetFileName(asset.BundlePath))}");
-                zip.CreateEntryFromFile(asset.BundlePath, currentEntry, CompressionLevel.Optimal);
-
-                string originalEntry = "";
-                var backup = !string.IsNullOrWhiteSpace(_backupDir)
-                    ? Path.Combine(_backupDir, ModEngine.SafeBackupName(asset.BundleName ?? Path.GetFileName(asset.BundlePath)))
-                    : "";
-                if (!string.IsNullOrWhiteSpace(backup) && File.Exists(backup))
-                {
-                    originalEntry = UniqueZipName(used, $"original/{SafeFileName(asset.BundleName ?? Path.GetFileName(asset.BundlePath))}");
-                    zip.CreateEntryFromFile(backup, originalEntry, CompressionLevel.Optimal);
-                    originalCount++;
-                }
-
-                records.Add(new
-                {
-                    bundle = asset.BundleName,
-                    source = asset.Source,
-                    path = asset.BundlePath,
-                    current_entry = currentEntry,
-                    original_entry = originalEntry,
-                    has_original_backup = !string.IsNullOrWhiteSpace(originalEntry)
-                });
-            }
-
-            var manifest = new
-            {
-                app = "JixModMaker",
-                version = Version,
-                exported_at = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-                game_dir = _folder,
-                bundle_count = bundles.Count,
-                bundles = records
-            };
-            var opts = new JsonSerializerOptions { WriteIndented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
-            var entry = zip.CreateEntry("manifest.json", CompressionLevel.Optimal);
-            using (var s = entry.Open())
-            using (var w = new StreamWriter(s))
-                w.Write(JsonSerializer.Serialize(manifest, opts));
-
-            _status.Text = $"已导出 bundle ZIP：{bundles.Count} 个 -> {Path.GetFileName(dlg.FileName)}";
-            MessageBox.Show($"导出成功。\n\n当前 bundle：{bundles.Count} 个\n原始备份：{originalCount} 个\n{dlg.FileName}", "导出成功");
+            int files = ReplacementZip.Export(_folder, bundles.Select(b => b.BundlePath), dlg.FileName);
+            _status.Text = $"已导出直接替换 ZIP：{files} 个文件";
+            MessageBox.Show($"导出成功，共 {files} 个文件。\n解压到目标设备对应的资源根目录即可覆盖。\n请使用目标手机版本的资源制作 Mod；导出不会转换 PC / 手机资源格式。", "导出成功");
         }
         catch (Exception ex)
         {

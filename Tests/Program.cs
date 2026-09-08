@@ -28,6 +28,24 @@ first = IndexService.ComputeSourceStamp(root, false, false);
 File.WriteAllBytes(Path.Combine(root, "new-hero.bundle"), new byte[] { 3 });
 Check(first != IndexService.ComputeSourceStamp(root, false, false), "new bundle invalidates index");
 Console.WriteLine("All regression checks passed.");
+var wrapped = Path.Combine(root, "hash-a", "hash-b");
+Directory.CreateDirectory(wrapped);
+File.WriteAllBytes(Path.Combine(wrapped, "__data"), new byte[] { 4, 5 });
+File.WriteAllText(Path.Combine(wrapped, "__info"), "metadata");
+var output = Path.Combine(root, "replacement.zip");
+ReplacementZip.Export(root, new[] { bundle, Path.Combine(wrapped, "__data") }, output);
+using (var zip = System.IO.Compression.ZipFile.OpenRead(output))
+{
+    Check(zip.Entries.Select(e => e.FullName).Order().SequenceEqual(new[] { "hash-a/hash-b/__data", "hash-a/hash-b/__info", "test.bundle" }), "replacement ZIP preserves exact paths without wrappers");
+    using var data = zip.GetEntry("hash-a/hash-b/__data").Open();
+    Check(data.ReadByte() == 4 && data.ReadByte() == 5 && data.ReadByte() == -1, "replacement bytes unchanged");
+}
+try
+{
+    ReplacementZip.Export(wrapped, new[] { bundle }, output);
+    throw new Exception("external path accepted");
+}
+catch (InvalidOperationException) { Console.WriteLine("PASS external resource rejected"); }
 Exception uiError = null;
 var ui = new Thread(() =>
 {

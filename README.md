@@ -9,9 +9,9 @@
 
 ## 下载
 
-当前版本：**v2.2.0**
+当前版本：**v2.2.1**
 
-- [下载 v2.2.0 Win64 免安装包](https://github.com/noah-ad/astral-party-mod-maker/releases/download/v2.2.0/AstralPartyModMaker-v2.2.0-win64.zip)
+- [下载 v2.2.1 Win64 免安装包](https://github.com/noah-ad/astral-party-mod-maker/releases/download/v2.2.1/AstralPartyModMaker-v2.2.1-win64.zip)
 - [查看全部版本与更新说明](https://github.com/noah-ad/astral-party-mod-maker/releases)
 
 下载 ZIP 后完整解压，双击 `启动 吉星Mod制作器.bat` 或 `JixModMaker.exe`。发行包已包含 .NET 8 运行环境，无需另外安装 SDK 或 Desktop Runtime。
@@ -27,7 +27,7 @@
 - **角色与皮肤树**：角色栏支持展开角色和皮肤、搜索及快速定位，不需要逐页翻找。
 - **直观替换与预览**：把图片拖入资源卡即可替换，也可双击选图；支持预览、智能裁切及原图导出。
 - **拖动导出**：直接把贴图预览拖到资源管理器即可导出 PNG，资源列表连续滚动、不分页。
-- **作品与分享**：导入、导出 `.jxpack` 图包，也可导出当前 Bundle 或全部已修改 Bundle 的 ZIP 压缩包，并附带来源清单和可用的原始备份。
+- **直接覆盖 ZIP**：保留当前资源根目录下的原始相对路径和文件名，手机端 `哈希目录/__data` 与配套 `__info` 保持原结构。不添加 current、original 或 manifest.json，解压到设备对应资源目录即可覆盖。只包含选中的资源包（同包的其它修改也会包含）。请基于目标手机版本的原始资源制作；此功能不会把 PC Bundle 转换为 Android Bundle。跨平台贴图可通过 `.jxpack` 应用到目标资源后再导出 ZIP。
 - **容错导入**：v2 图包按贴图名定位，同名贴图会尽量写入当前目录的所有位置；缺失项只统计、不终止整包，可切换资源目录后重复导入。
 - **资源包级操作**：非贴图资源支持索引、定位和替换所在资源包；资产级音频、模型与动画写回仍依赖对应格式的编码器。
 - **备份与还原**：替换前自动保存原始 Bundle，可一键还原全部修改，并支持旧 Mod 迁移。

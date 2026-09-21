@@ -21,6 +21,8 @@ public class MainForm : Form
     private ModManifest _ws = new();
     private TexRef _selectedAsset;
     private int _loadSeq;
+    private int _previewSeq;
+    private MemoryStream _animationPreviewStream;
     private Button _selectedCategoryButton;
     private readonly List<Button> _navButtons = new();
     private string _activePage = PageDashboard;
@@ -42,7 +44,7 @@ public class MainForm : Form
     private string _sortedKey;
     private List<TexIndexEntry> _sortedRows;
 
-    public const string Version = "v2.2.1";
+    public const string Version = "v2.3.0-preview.9";
     private const string PageDashboard = "dashboard";
     private const string PageBrowse = "browse";
     private const string PagePack = "pack";
@@ -114,6 +116,7 @@ public class MainForm : Form
     private readonly Label _detailPath = Theme.Caption("");
     private readonly Label _detailHint = Theme.Caption("");
     private readonly Button _replaceTextureBtn = Theme.FlatButton("替换贴图");
+    private readonly Button _replaceAnimationBtn = Theme.FlatButton("替换动态立绘");
     private readonly Button _exportPngBtn = Theme.FlatButton("导出PNG");
     private readonly Button _exportBundleZipBtn = Theme.FlatButton("导出当前Bundle ZIP");
     private readonly Button _replaceBundleBtn = Theme.FlatButton("替换所在资源包");
@@ -505,6 +508,7 @@ public class MainForm : Form
         menu.Items.Add("导出所在 Bundle ZIP...", null, (_, _) => { if (_selectedAsset != null) ExportBundleZip(new[] { _selectedAsset }, _selectedAsset.Name ?? "bundle"); });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("定位文件", null, (_, _) => { if (_selectedAsset != null) LocateBundle(_selectedAsset); });
+        var animationItem = menu.Items.Add("替换动态立绘...", null, (_, _) => OpenAnimatedPortrait(_selectedAsset));
         menu.Opening += (_, e) =>
         {
             bool has = _selectedAsset != null;
@@ -513,6 +517,7 @@ public class MainForm : Form
             menu.Items[1].Enabled = tex;
             menu.Items[2].Enabled = has;
             menu.Items[4].Enabled = has;
+            animationItem.Visible = IsAnimatedPortraitCandidate(_selectedAsset);
             e.Cancel = !has;
         };
         _resourceList.ContextMenuStrip = menu;
@@ -562,44 +567,54 @@ public class MainForm : Form
     private void BuildRightPanel()
     {
         _rightPanel.Padding = new Padding(14, 14, 14, 14);
-
-        _detailTitle.Dock = DockStyle.Top;
-        _detailTitle.Height = 42;
-        _detailTitle.Font = Theme.UI(10.5f, true);
-        _detailTitle.AutoEllipsis = true;
-
-        _detailMeta.Dock = DockStyle.Top;
-        _detailMeta.Height = 80;
-        _detailMeta.Font = Theme.UI(9f);
-
-        _detailPath.Dock = DockStyle.Top;
-        _detailPath.Height = 70;
-        _detailPath.Font = Theme.UI(8.5f);
-
-        _detailHint.Dock = DockStyle.Top;
-        _detailHint.Height = 42;
-        _detailHint.Font = Theme.UI(8.5f);
-
-        var buttons = new BufferedFlowPanel
+        _rightPanel.AutoScroll = true;
+        var details = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 172,
-            BackColor = Theme.Bar,
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = false
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 1,
+            Margin = Padding.Empty
         };
-        foreach (var b in new[] { _replaceTextureBtn, _exportPngBtn, _exportBundleZipBtn, _replaceBundleBtn, _locateBtn })
+        details.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        foreach (var label in new[] { _detailTitle, _detailMeta, _detailPath, _detailHint })
         {
-            b.Width = 286;
-            b.Height = 28;
+            label.Dock = DockStyle.Top;
+            label.AutoSize = true;
+            label.TextAlign = ContentAlignment.TopLeft;
+            label.Margin = new Padding(0, 0, 0, 12);
+        }
+        _detailTitle.Font = Theme.UI(10.5f, true);
+        _detailMeta.Font = Theme.UI(9f);
+        _detailPath.Font = Theme.UI(8.5f);
+        _detailHint.Font = Theme.UI(8.5f);
+
+        var buttons = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            BackColor = Theme.Bar,
+            ColumnCount = 1,
+            Margin = new Padding(0, 0, 0, 10)
+        };
+        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        foreach (var b in new[] { _replaceTextureBtn, _replaceAnimationBtn, _exportPngBtn, _exportBundleZipBtn, _replaceBundleBtn, _locateBtn })
+        {
+            b.AutoSize = false;
+            b.Dock = DockStyle.Top;
+            b.Height = 32;
             b.Margin = new Padding(0, 0, 0, 5);
             b.TextAlign = ContentAlignment.MiddleLeft;
             StyleSecondaryButton(b);
-            buttons.Controls.Add(b);
+            buttons.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            buttons.Controls.Add(b, 0, buttons.Controls.Count);
         }
         StylePrimaryButton(_replaceTextureBtn);
+        _replaceAnimationBtn.ForeColor = Theme.Cyan;
 
         _replaceTextureBtn.Click += (_, _) => { if (_selectedAsset != null) PickAndReplaceTexture(_selectedAsset); };
+        _replaceAnimationBtn.Click += (_, _) => OpenAnimatedPortrait(_selectedAsset);
         _exportPngBtn.Click += (_, _) => { if (_selectedAsset != null) ExportSingle(_selectedAsset); };
         _exportBundleZipBtn.Click += (_, _) => { if (_selectedAsset != null) ExportBundleZip(new[] { _selectedAsset }, "当前资源包"); };
         _replaceBundleBtn.Click += (_, _) => { if (_selectedAsset != null) ReplaceBundleFile(_selectedAsset); };
@@ -607,12 +622,13 @@ public class MainForm : Form
         SetDetailButtons(false, false);
         ConfigurePreviewDragDrop();
 
-        _rightPanel.Controls.Add(_detailHint);
-        _rightPanel.Controls.Add(buttons);
-        _rightPanel.Controls.Add(_detailPath);
-        _rightPanel.Controls.Add(_detailMeta);
-        _rightPanel.Controls.Add(_detailTitle);
-        _rightPanel.Controls.Add(_preview);
+        _preview.Margin = new Padding(0, 0, 0, 12);
+        foreach (var control in new Control[] { _preview, _detailTitle, buttons, _detailMeta, _detailPath, _detailHint })
+        {
+            details.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            details.Controls.Add(control, 0, details.Controls.Count);
+        }
+        _rightPanel.Controls.Add(details);
     }
 
     private void ConfigurePreviewDragDrop()
@@ -2174,6 +2190,8 @@ public class MainForm : Form
         menu.Items.Add("导出所在 Bundle ZIP...", null, (_, _) => ExportBundleZip(new[] { asset }, asset.Name ?? asset.BundleName ?? "bundle"));
         menu.Items.Add("替换所在资源包...", null, (_, _) => ReplaceBundleFile(asset));
         menu.Items.Add("定位文件", null, (_, _) => LocateBundle(asset));
+        if (IsAnimatedPortraitCandidate(asset))
+            menu.Items.Add("替换动态立绘...", null, (_, _) => OpenAnimatedPortrait(asset));
         card.ContextMenuStrip = menu;
         visual.ContextMenuStrip = menu;
         lbl.ContextMenuStrip = menu;
@@ -2247,8 +2265,12 @@ public class MainForm : Form
     {
         _selectedAsset = asset;
         UpdateDetailText(asset);
-        _preview.Image?.Dispose();
+        var oldPreview = _preview.Image;
         _preview.Image = null;
+        oldPreview?.Dispose();
+        _animationPreviewStream?.Dispose();
+        _animationPreviewStream = null;
+        _previewSeq++;
 
         if (asset.IsTexture && asset.PathId == 0)
         {
@@ -2348,20 +2370,41 @@ public class MainForm : Form
     private void LoadPreviewAsync(TexRef asset, byte[] thumbnail)
     {
         if (!asset.IsTexture || asset.PathId == 0) return;
-        int seq = _loadSeq;
+        int seq = ++_previewSeq;
+        string root = AnimatedPortraitRoot();
         Task.Run(() =>
         {
-            try { return _engine.DecodePng(asset.BundlePath, asset.PathId, Sc(620)); }
-            catch { return thumbnail; }
+            string state = null;
+            try
+            {
+                var receipt = PortraitReplacement.ReadReceipt(root, asset.Name);
+                if (receipt?.Texture == asset.Name)
+                {
+                    if (PortraitReplacement.IsInstalled(root, receipt))
+                    {
+                        state = "动态立绘已写入并校验 · " + receipt.SourceName + " · 本地预览（前 6 秒），游戏内效果待确认";
+                        if (File.Exists(receipt.Preview)) return (Bytes: File.ReadAllBytes(receipt.Preview), State: state, Animated: true);
+                        state += " · 预览文件缺失";
+                    }
+                    else state = "动态立绘记录已失效：资源已更新或重置，当前显示静态贴图";
+                }
+                return (Bytes: _engine.DecodePng(asset.BundlePath, asset.PathId, Sc(620)), State: state, Animated: false);
+            }
+            catch { return (Bytes: thumbnail, State: state, Animated: false); }
         }).ContinueWith(t =>
         {
-            if (!IsHandleCreated || _selectedAsset != asset) return;
+            if (!IsHandleCreated || _selectedAsset != asset || seq != _previewSeq) return;
             BeginInvoke(() =>
             {
-                if (_selectedAsset != asset || t.Result == null) return;
-                _preview.Image?.Dispose();
-                _preview.Image = BytesToImage(t.Result);
-                _status.Text = $"已预览：{asset.Name}";
+                if (_selectedAsset != asset || t.Result.Bytes == null || seq != _previewSeq) return;
+                var oldPreview = _preview.Image;
+                _preview.Image = null;
+                oldPreview?.Dispose();
+                _animationPreviewStream?.Dispose();
+                _animationPreviewStream = new MemoryStream(t.Result.Bytes);
+                _preview.Image = Image.FromStream(_animationPreviewStream);
+                if (t.Result.State != null) _detailHint.Text = t.Result.State;
+                _status.Text = t.Result.State ?? $"已预览：{asset.Name}";
             });
         });
     }
@@ -2378,6 +2421,7 @@ public class MainForm : Form
     private void SetDetailButtons(bool hasAsset, bool isTexture)
     {
         _replaceTextureBtn.Enabled = hasAsset && isTexture;
+        _replaceAnimationBtn.Enabled = hasAsset && isTexture && IsAnimatedPortraitCandidate(_selectedAsset);
         _exportPngBtn.Enabled = hasAsset && isTexture;
         _exportBundleZipBtn.Enabled = hasAsset;
         _replaceBundleBtn.Enabled = hasAsset;
@@ -2413,6 +2457,12 @@ public class MainForm : Form
     private void DoReplace(RoundedCard card, string imagePath, bool forceCrop = false, TexRef explicitAsset = null)
     {
         var asset = explicitAsset ?? (TexRef)card.Tag;
+        if (AnimatedPortraitDialog.IsVideo(imagePath))
+        {
+            if (!IsAnimatedPortraitCandidate(asset)) { _status.Text = "视频替换目前仅支持角色卡面立绘。"; return; }
+            OpenAnimatedPortrait(asset, imagePath);
+            return;
+        }
         if (!asset.IsTexture)
         {
             _status.Text = "该资源不是 Texture2D，不能做贴图级替换。";
@@ -2584,6 +2634,39 @@ public class MainForm : Form
             .ToList();
 
         ExportBundleZip(assets, "已改Bundle");
+    }
+
+    private static bool IsAnimatedPortraitCandidate(TexRef asset) =>
+        asset is { IsTexture: true } && asset.Name?.StartsWith("UT_Hero_Card_", StringComparison.Ordinal) == true;
+
+    private void OpenAnimatedPortrait(TexRef asset, string videoFile = null)
+    {
+        if (!IsAnimatedPortraitCandidate(asset)) return;
+        if (!EnsureTextureReady(asset)) return;
+        string root = AnimatedPortraitRoot();
+        using var dialog = new AnimatedPortraitDialog(root, asset.Name, videoFile, new Size(asset.Width, asset.Height));
+        dialog.ShowDialog(this);
+        _status.Text = dialog.ResultMessage.Replace('\n', ' ');
+        if (_selectedAsset == asset)
+        {
+            UpdateDetailText(asset);
+            LoadPreviewAsync(asset, null);
+        }
+    }
+
+    private string AnimatedPortraitRoot() => string.Equals(Path.GetFileName(_folder), "StandaloneWindows64", StringComparison.OrdinalIgnoreCase)
+        && Directory.Exists(_index?.HotDir) ? _index.HotDir : _folder;
+
+    protected override void OnFormClosed(FormClosedEventArgs e)
+    {
+        if (_preview != null)
+        {
+            var image = _preview.Image;
+            _preview.Image = null;
+            image?.Dispose();
+        }
+        _animationPreviewStream?.Dispose();
+        base.OnFormClosed(e);
     }
 
     private void ExportBundleZip(IEnumerable<TexRef> assets, string defaultName)

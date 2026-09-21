@@ -5,5 +5,8 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
-  <ItemGroup><ProjectReference Include="../App/JixModMaker.csproj" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../App/JixModMaker.csproj" />
+    <Reference Include="Mono.Cecil"><HintPath>../libs/Mono.Cecil.dll</HintPath></Reference>
+  </ItemGroup>
 </Project>

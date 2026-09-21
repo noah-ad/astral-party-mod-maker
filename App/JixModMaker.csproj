@@ -7,23 +7,32 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <AssemblyName>JixModMaker</AssemblyName>
-    <Version>2.2.1</Version>
-    <AssemblyVersion>2.2.1.0</AssemblyVersion>
-    <FileVersion>2.2.1.0</FileVersion>
+    <Version>2.3.0-preview.9</Version>
+    <AssemblyVersion>2.3.0.0</AssemblyVersion>
+    <FileVersion>2.3.0.0</FileVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>
+    <PortableLauncherName>吉星Mod制作器</PortableLauncherName>
+    <IncludeVideoRuntime Condition="'$(IncludeVideoRuntime)' == ''">true</IncludeVideoRuntime>
     <!-- 第三方库放在仓库根的 libs/ 下 (见 libs/README.txt 说明来源与协议) -->
     <LibsDir>$(MSBuildProjectDirectory)/../libs</LibsDir>
   </PropertyGroup>
 
   <ItemGroup>
+    <Content Include="Tools/video/mux.py;Tools/video/DEPENDENCIES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Tools/video/**/*" Exclude="Tools/video/mux.py;Tools/video/DEPENDENCIES.md"
+             Condition="'$(IncludeVideoRuntime)' == 'true'" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="$(LibsDir)/Mono.Cecil.LICENSE.txt" Link="Mono.Cecil.LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(LibsDir)/classdata.tpk" Link="classdata.tpk" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Assets\app_icon.ico" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\app_icon.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="Mono.Cecil">
+      <HintPath>$(LibsDir)/Mono.Cecil.dll</HintPath>
+    </Reference>
     <Reference Include="AssetsTools.NET">
       <HintPath>$(LibsDir)/AssetsTools.NET.dll</HintPath>
     </Reference>
@@ -45,6 +54,27 @@
     </ItemGroup>
     <Copy SourceFiles="@(LibDlls)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" OverwriteReadOnlyFiles="true" />
     <Copy SourceFiles="$(LibsDir)/classdata.tpk" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CreatePortableLayout" AfterTargets="Publish" Condition="'$(PortableRoot)' != ''">
+    <PropertyGroup>
+      <_PortableRoot>$([MSBuild]::EnsureTrailingSlash('$(PortableRoot)'))</_PortableRoot>
+      <_PortableData>$([MSBuild]::EnsureTrailingSlash('$(_PortableRoot)data'))</_PortableData>
+      <_PortableDataFullPath>$([System.IO.Path]::GetFullPath('$(_PortableData)'))</_PortableDataFullPath>
+      <_PublishFullPath>$([System.IO.Path]::GetFullPath('$(PublishDir)'))</_PublishFullPath>
+    </PropertyGroup>
+    <Error Condition="'$(SelfContained)' != 'true' or '$(RuntimeIdentifier)' != 'win-x64'"
+           Text="Portable packaging requires a self-contained win-x64 publish." />
+    <Error Condition="'$(_PublishFullPath)' != '$(_PortableDataFullPath)'"
+           Text="PublishDir must be the data directory inside PortableRoot." />
+    <CreateAppHost AppHostSourcePath="$(AppHostSourcePath)"
+                   AppHostDestinationPath="$(_PortableRoot)$(PortableLauncherName).exe"
+                   AppBinaryName="data/$(AssemblyName)$(TargetExt)"
+                   IntermediateAssembly="@(IntermediateAssembly->'%(FullPath)')"
+                   WindowsGraphicalUserInterface="true" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)/../README.md;$(MSBuildProjectDirectory)/../LICENSE"
+          DestinationFolder="$(_PortableData)" />
+    <Delete Files="$(_PortableData)$(AssemblyName).exe" />
   </Target>
 
 </Project>

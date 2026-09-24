@@ -44,7 +44,7 @@ public class MainForm : Form
     private string _sortedKey;
     private List<TexIndexEntry> _sortedRows;
 
-    public const string Version = "v2.3.0-preview.9";
+    public const string Version = "v2.3.0-preview.11";
     private const string PageDashboard = "dashboard";
     private const string PageBrowse = "browse";
     private const string PagePack = "pack";
@@ -116,7 +116,7 @@ public class MainForm : Form
     private readonly Label _detailPath = Theme.Caption("");
     private readonly Label _detailHint = Theme.Caption("");
     private readonly Button _replaceTextureBtn = Theme.FlatButton("替换贴图");
-    private readonly Button _replaceAnimationBtn = Theme.FlatButton("替换动态立绘");
+    private readonly Button _replaceAnimationBtn = Theme.FlatButton("替换为视频 / GIF");
     private readonly Button _exportPngBtn = Theme.FlatButton("导出PNG");
     private readonly Button _exportBundleZipBtn = Theme.FlatButton("导出当前Bundle ZIP");
     private readonly Button _replaceBundleBtn = Theme.FlatButton("替换所在资源包");
@@ -508,7 +508,7 @@ public class MainForm : Form
         menu.Items.Add("导出所在 Bundle ZIP...", null, (_, _) => { if (_selectedAsset != null) ExportBundleZip(new[] { _selectedAsset }, _selectedAsset.Name ?? "bundle"); });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("定位文件", null, (_, _) => { if (_selectedAsset != null) LocateBundle(_selectedAsset); });
-        var animationItem = menu.Items.Add("替换动态立绘...", null, (_, _) => OpenAnimatedPortrait(_selectedAsset));
+        var animationItem = menu.Items.Add("替换为视频 / GIF...", null, (_, _) => OpenAnimatedPortrait(_selectedAsset));
         menu.Opening += (_, e) =>
         {
             bool has = _selectedAsset != null;
@@ -2191,7 +2191,7 @@ public class MainForm : Form
         menu.Items.Add("替换所在资源包...", null, (_, _) => ReplaceBundleFile(asset));
         menu.Items.Add("定位文件", null, (_, _) => LocateBundle(asset));
         if (IsAnimatedPortraitCandidate(asset))
-            menu.Items.Add("替换动态立绘...", null, (_, _) => OpenAnimatedPortrait(asset));
+            menu.Items.Add("替换为视频 / GIF...", null, (_, _) => OpenAnimatedPortrait(asset));
         card.ContextMenuStrip = menu;
         visual.ContextMenuStrip = menu;
         lbl.ContextMenuStrip = menu;
@@ -2382,11 +2382,11 @@ public class MainForm : Form
                 {
                     if (PortraitReplacement.IsInstalled(root, receipt))
                     {
-                        state = "动态立绘已写入并校验 · " + receipt.SourceName + " · 本地预览（前 6 秒），游戏内效果待确认";
+                        state = "动态资源已写入并校验 · " + receipt.SourceName + " · 本地预览（前 6 秒），游戏内效果待确认";
                         if (File.Exists(receipt.Preview)) return (Bytes: File.ReadAllBytes(receipt.Preview), State: state, Animated: true);
                         state += " · 预览文件缺失";
                     }
-                    else state = "动态立绘记录已失效：资源已更新或重置，当前显示静态贴图";
+                    else state = "动态替换记录已失效：资源已更新或重置，当前显示静态贴图";
                 }
                 return (Bytes: _engine.DecodePng(asset.BundlePath, asset.PathId, Sc(620)), State: state, Animated: false);
             }
@@ -2459,7 +2459,7 @@ public class MainForm : Form
         var asset = explicitAsset ?? (TexRef)card.Tag;
         if (AnimatedPortraitDialog.IsVideo(imagePath))
         {
-            if (!IsAnimatedPortraitCandidate(asset)) { _status.Text = "视频替换目前仅支持角色卡面立绘。"; return; }
+            if (!IsAnimatedPortraitCandidate(asset)) { _status.Text = "视频替换当前只支持角色立绘。"; return; }
             OpenAnimatedPortrait(asset, imagePath);
             return;
         }
@@ -2637,7 +2637,7 @@ public class MainForm : Form
     }
 
     private static bool IsAnimatedPortraitCandidate(TexRef asset) =>
-        asset is { IsTexture: true } && asset.Name?.StartsWith("UT_Hero_Card_", StringComparison.Ordinal) == true;
+        asset is { IsTexture: true } && AnimatedPortraitPatch.IsCharacterPortrait(asset.Name);
 
     private void OpenAnimatedPortrait(TexRef asset, string videoFile = null)
     {

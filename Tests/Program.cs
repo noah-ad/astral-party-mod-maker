@@ -125,17 +125,19 @@ if (args.Length == 5 && args[0] == "--animation-install-smoke")
     }
     string HashFile(string path) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)));
     var originalHashes = new[] { HashFile(args[2]), HashFile(args[3]) };
-    var untouchedVideo = Clone(args[3]);
-    var request = new AnimatedPortraitPatch.Request(copyRoot, Clone(args[2]), "UT_Hero_Card_101", args[4], "");
+    var request = new AnimatedPortraitPatch.Request(copyRoot, Clone(args[2]), Clone(args[3]), "UT_Hero_Card_101", args[4], "");
     var firstInstall = PortraitReplacement.Apply(request, sourceName: "first.mp4");
     Check(PortraitReplacement.IsInstalled(copyRoot, firstInstall), "isolated install verified against written file hashes");
     var secondInstall = PortraitReplacement.Apply(request, sourceName: "second.mp4", removeGreen: true);
     Check(secondInstall.BaselineRestoreZip == firstInstall.RestoreZip, "repeat replacement keeps first clean backup");
     Check(PortraitReplacement.ReadReceipt(copyRoot).SourceName == "second.mp4", "persistent replacement receipt updated");
-    var thirdInstall = PortraitReplacement.Apply(request with { TextureName = "UT_Hero_Card_102" }, sourceName: "third.mp4");
-    Check(PortraitReplacement.ReadReceipt(copyRoot, request.TextureName).SourceName == "second.mp4", "multiple independent portrait receipts retained");
-    Check(HashFile(untouchedVideo) == originalHashes[1], "existing alternate-art slot remains untouched after three installs");
-    secondInstall = thirdInstall;
+    Check(HashFile(request.VideoBundle) != originalHashes[1], "official video slot is replaced");
+    try
+    {
+        PortraitReplacement.Apply(request with { TextureName = "UT_Hero_Card_102" }, sourceName: "third.mp4");
+        throw new Exception("shared video slot accepted a second portrait");
+    }
+    catch (InvalidOperationException) { Console.WriteLine("PASS one native slot cannot be assigned to two portraits"); }
     string cacheInfo = Path.Combine(Path.GetDirectoryName(request.RuntimeBundle), "__info");
     if (File.Exists(cacheInfo))
     {
@@ -154,20 +156,9 @@ if (args.Length == 5 && args[0] == "--animation-install-smoke")
     PortraitReplacement.Restore(copyRoot);
     Check(PortraitReplacement.ReadReceipt(copyRoot) == null, "restoring clears active replacement status");
     if (File.Exists(cacheInfo)) Check(File.ReadAllLines(cacheInfo)[1] == "1234567890", "restore preserves Unity cache access metadata");
-    Check(HashFile(request.RuntimeBundle) == originalHashes[0] && HashFile(untouchedVideo) == originalHashes[1], "restore returns exact pre-first-replacement bytes");
+    Check(HashFile(request.RuntimeBundle) == originalHashes[0] && HashFile(request.VideoBundle) == originalHashes[1], "restore returns both exact pre-first-replacement bundles");
     Check(HashFile(args[2]) == originalHashes[0] && HashFile(args[3]) == originalHashes[1], "user game bundles untouched by isolated test");
     Console.WriteLine("ISOLATED COPY " + copyRoot);
-    return;
-}
-if (args.Length == 4 && args[0] == "--upgrade-assembly")
-{
-    var metadata = PortraitMovieMetadata.Read(args[2]);
-    var dependencies = Directory.EnumerateFiles(Path.GetDirectoryName(Path.GetFullPath(args[1])), "*.dll")
-        .ToDictionary(Path.GetFileNameWithoutExtension, File.ReadAllBytes, StringComparer.OrdinalIgnoreCase);
-    var upgraded = AnimatedPortraitPatch.PatchAssembly(File.ReadAllBytes(args[1]), "UT_Hero_Card_103", File.ReadAllBytes(args[2]), metadata, dependencies);
-    File.WriteAllBytes(args[3], upgraded);
-    using var module = Mono.Cecil.ModuleDefinition.ReadModule(new MemoryStream(upgraded));
-    Check(module.GetType("Jix.DynamicRendering.PortraitMesh") != null, "preview.7 independent resources upgrade to fitted mesh");
     return;
 }
 
@@ -191,22 +182,27 @@ if (args.Length == 3 && args[0] == "--reject-type-layout")
     catch (InvalidDataException) { Console.WriteLine("PASS old malformed TextAsset type table rejected"); }
     return;
 }
-var fixtureUsm = new byte[150007];
-new Random(42).NextBytes(fixtureUsm);
-"CRID"u8.CopyTo(fixtureUsm);
-var fixtureMetadata = new PortraitMovieMetadata(880, 1208, 30000, 1000, 120, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(fixtureUsm)));
-var patchedAssembly = AnimatedPortraitPatch.PatchAssembly(originalAssembly, "UT_Hero_Card_101", fixtureUsm, fixtureMetadata);
-using (var legacy = Mono.Cecil.ModuleDefinition.ReadModule(new MemoryStream(patchedAssembly)))
+var patchedAssembly = AnimatedPortraitPatch.PatchAssembly(originalAssembly, "UT_Hero_Card_101", AnimatedPortraitPatch.VideoSlot);
+Check(patchedAssembly.SequenceEqual(AnimatedPortraitPatch.PatchAssembly(patchedAssembly, "UT_Hero_Card_101", AnimatedPortraitPatch.VideoSlot)),
+    "repeating the same native-slot mapping does not stack patches");
+using (var module = Mono.Cecil.ModuleDefinition.ReadModule(new MemoryStream(patchedAssembly)))
 {
-    var resource = legacy.Types.Single(t => t.Namespace == "Jix.DynamicPortrait");
-    resource.Fields.Remove(resource.Fields.Single(f => f.Name == "AspectRatio"));
-    using var saved = new MemoryStream();
-    legacy.Write(saved);
-    patchedAssembly = AnimatedPortraitPatch.PatchAssembly(saved.ToArray(), "UT_Hero_Card_102", fixtureUsm, fixtureMetadata);
-    Check(patchedAssembly.Length > 0, "older resource without aspect field derives ratio from factory metadata");
+    Check(!module.Types.Any(t => t.Namespace is "Jix.DynamicPortrait" or "Jix.DynamicRendering"),
+        "native-slot patch embeds no independent video resources or renderers");
+    Check(module.Types.Single(t => t.Name == "SkinStandingPaintingConfigureItem").Methods.Count(m => m.Name == "JixMapAnimatedPortrait") == 1,
+        "native-slot patch adds one small portrait mapping helper");
 }
-patchedAssembly = AnimatedPortraitPatch.PatchAssembly(patchedAssembly, "UT_Hero_Card_101", fixtureUsm, fixtureMetadata);
-patchedAssembly = AnimatedPortraitPatch.PatchAssembly(patchedAssembly, "UT_Hero_Card_102", fixtureUsm, fixtureMetadata);
+try
+{
+    AnimatedPortraitPatch.PatchAssembly(patchedAssembly, "UT_Hero_Card_102", AnimatedPortraitPatch.VideoSlot);
+    throw new Exception("one video slot accepted two portrait mappings");
+}
+catch (InvalidOperationException) { Console.WriteLine("PASS native video slot remains single-owner"); }
+foreach (string unsupported in new[] { "UT_HandCard_21002", "UT_Event_12703", "UT_MapEvent_31001", "UT_Hero_Card_" })
+{
+    try { AnimatedPortraitPatch.PatchAssembly(originalAssembly, unsupported, AnimatedPortraitPatch.VideoSlot); throw new Exception("unsupported dynamic target accepted"); }
+    catch (ArgumentException) { Console.WriteLine("PASS unsupported dynamic target rejected: " + unsupported); }
+}
 var context = new System.Runtime.Loader.AssemblyLoadContext("portrait-test", true);
 using (var stream = new MemoryStream(patchedAssembly))
 {
@@ -214,84 +210,23 @@ using (var stream = new MemoryStream(patchedAssembly))
     var fixture = assembly.GetType("SkinStandingPaintingConfigureItem");
     var instance = Activator.CreateInstance(fixture);
     (string, bool) Invoke(string method) => ((string, bool))fixture.GetMethod(method).Invoke(instance, null);
-    Check(Invoke("GetCharacter") == ("JixPortrait_UT_Hero_Card_101", true), "selected static portrait routes to independent resource");
-    Check(Invoke("GetCharacterInGame") == ("JixPortrait_UT_Hero_Card_101", true), "in-game fallback preserves independent route");
+    Check(Invoke("GetCharacter") == (AnimatedPortraitPatch.VideoSlot, true), "selected static portrait routes to official video slot");
+    Check(Invoke("GetCharacterInGame") == (AnimatedPortraitPatch.VideoSlot, true), "in-game fallback routes to official video slot");
     fixture.GetProperty("InGameCharacter").SetValue(instance, "UT_Hero_Card_101");
-    Check(Invoke("GetCharacterInGame") == ("JixPortrait_UT_Hero_Card_101", true), "explicit in-game portrait routes to video");
-    fixture.GetProperty("Character").SetValue(instance, "UT_Hero_Card_102");
-    Check(Invoke("GetCharacter") == ("JixPortrait_UT_Hero_Card_102", true), "second portrait has its own independent resource");
+    Check(Invoke("GetCharacterInGame") == (AnimatedPortraitPatch.VideoSlot, true), "explicit in-game portrait routes to video");
     fixture.GetProperty("Character").SetValue(instance, "UT_Hero_Card_103");
     Check(Invoke("GetCharacter") == ("UT_Hero_Card_103", false), "unmodified portraits remain static");
     fixture.GetProperty("SafeMode").SetValue(instance, true);
     Check(Invoke("GetCharacter") == ("UT_Hero_Card_101_sfw", false), "safe-mode portrait remains unchanged");
-    var managerType = assembly.GetType("UI.CriMovieManager");
-    var manager = Activator.CreateInstance(managerType);
-    object Load(string key)
-    {
-        var task = managerType.GetMethod("Load").Invoke(manager, new object[] { key });
-        return task.GetType().GetField("Result").GetValue(task);
-    }
-    object Property(object target, string name) => target.GetType().GetProperty(name).GetValue(target);
-    object Field(object target, string name) => target.GetType().GetField(name).GetValue(target);
-    var portrait = Load("JixPortrait_UT_Hero_Card_101");
-    Check(ReferenceEquals(portrait, Load("JixPortrait_UT_Hero_Card_101")), "independent loader caches its own asset");
-    Check((int)Field(manager, "OriginalLoads") == 0, "independent load never requests an Addressables slot");
-    var impl = Property(portrait, "Implementation");
-    Check(((byte[])Property(impl, "Data")).SequenceEqual(fixtureUsm), "independent RVA resource bytes load exactly");
-    Check((bool)Property(impl, "Enabled"), "independent video memory enabled before playback");
-    var movieInfo = Property(portrait, "MovieInfo");
-    Check((uint)Field(movieInfo, "width") == 880 && (uint)Field(movieInfo, "height") == 1208 && (uint)Field(movieInfo, "totalFrames") == 120, "independent asset uses converted dimensions and timing");
-    Check((uint)Field(movieInfo, "numAlphaStreams") == 1 && Convert.ToInt32(Field(movieInfo, "codecType")) == 1 && Convert.ToInt32(Field(movieInfo, "alphaCodecType")) == 1, "independent asset advertises alpha codec");
-    Check((bool)Field(Property(portrait, "AssetInfo"), "loop"), "independent asset loops");
-    Check(!ReferenceEquals(portrait, Load("JixPortrait_UT_Hero_Card_102")), "different portraits do not share assets");
-    var alternate = Load("VHandCard_13021002");
-    Check((string)Property(alternate, "name") == "VHandCard_13021002" && (int)Field(manager, "OriginalLoads") == 1, "existing alternate-art loads through original code");
-    Check(Load(null) == null, "null key keeps original behavior");
-    managerType.GetMethod("ClearOne").Invoke(manager, new object[] { "JixPortrait_UT_Hero_Card_101" });
-    Check((bool)Property(portrait, "Destroyed") && !(bool)Property(impl, "Enabled"), "independent resource is destroyed and unpinned");
-    var addressables = assembly.GetType("UnityEngine.AddressableAssets.Addressables");
-    Check((int)addressables.GetField("Released").GetValue(null) == 0, "independent cleanup never calls Addressables.Release");
-    managerType.GetMethod("Clear").Invoke(manager, null);
-    Check((int)addressables.GetField("Released").GetValue(null) == 1, "original alternate-art keeps original release path");
-    Check(!ReferenceEquals(portrait, Load("JixPortrait_UT_Hero_Card_101")), "released independent resource can reload");
-    var graph = Activator.CreateInstance(assembly.GetType("FairyGUI.GGraph"));
-    var graphics = Property(Property(graph, "shape"), "graphics");
-    var originalMesh = Property(graphics, "meshFactory");
-    void Play(string key) => managerType.GetMethod("Play").Invoke(manager, new[] { key, graph });
-    Play("JixPortrait_UT_Hero_Card_101");
-    var adapter = Property(graphics, "meshFactory");
-    Check(!ReferenceEquals(adapter, originalMesh), "independent video attaches an aspect-preserving mesh");
-    var rectType = assembly.GetType("UnityEngine.Rect");
-    foreach (var box in new[] { (1000f, 700f), (300f, 900f), (490f, 1200f) })
-    {
-        var vb = Activator.CreateInstance(assembly.GetType("FairyGUI.VertexBuffer"));
-        vb.GetType().GetField("contentRect").SetValue(vb, Activator.CreateInstance(rectType, 10f, 20f, box.Item1, box.Item2));
-        vb.GetType().GetField("uvRect").SetValue(vb, Activator.CreateInstance(rectType, 0f, 0f, 1f, 1f));
-        adapter.GetType().GetMethod("OnPopulateMesh").Invoke(adapter, new[] { vb });
-        var quad = Field(vb, "LastQuad");
-        float width = (float)Property(quad, "width"), height = (float)Property(quad, "height");
-        Check(Math.Abs(width / height - 880f / 1208) < .00001 && width <= box.Item1 && height <= box.Item2,
-            "game mesh preserves video aspect in " + box);
-        Check(Math.Abs((float)Property(quad, "x") - 10 - (box.Item1 - width) / 2) < .001 &&
-            Math.Abs((float)Property(quad, "y") - 20 - (box.Item2 - height) / 2) < .001, "fitted game mesh remains centered");
-        Check((float)Property(Field(vb, "LastUv"), "width") == 1, "mesh fitting preserves full texture UVs");
-    }
-    Play("JixPortrait_UT_Hero_Card_101");
-    Check(ReferenceEquals(adapter, Property(graphics, "meshFactory")), "repeat playback does not shrink or stack mesh adapters");
-    Play("VHandCard_13021002");
-    Check(ReferenceEquals(originalMesh, Property(graphics, "meshFactory")), "original alternate-art geometry is restored");
-    managerType.GetMethod("PlaAutoReleaseVideo").Invoke(manager, new[] { "JixPortrait_UT_Hero_Card_101", graph });
-    Check(!ReferenceEquals(originalMesh, Property(graphics, "meshFactory")), "auto-release video path also fits aspect");
-    managerType.GetMethod("StopAndDestroy").Invoke(manager, new[] { graph });
-    Check(ReferenceEquals(originalMesh, Property(graphics, "meshFactory")), "stopping independent playback restores original geometry");
-    managerType.GetMethod("Play").Invoke(manager, new object[] { "JixPortrait_UT_Hero_Card_101", null });
 }
 context.Unload();
 if (args.Length == 2 && args[0] == "--animation-find")
 {
-    var found = AnimatedPortraitPatch.FindRuntime(args[1], CancellationToken.None);
-    Check(File.Exists(found), "runtime discovery without alternate-art download");
-    Console.WriteLine(found);
+    var found = AnimatedPortraitPatch.FindBundles(args[1], CancellationToken.None);
+    Check(File.Exists(found.Runtime) && File.Exists(found.Video), "runtime and official video slot discovery");
+    Console.WriteLine(found.Runtime);
+    Console.WriteLine(found.Video);
+    return;
 }
 if (args.Length == 5 && args[0] == "--animation-smoke")
 {
@@ -299,13 +234,15 @@ if (args.Length == 5 && args[0] == "--animation-smoke")
     var runtimeHash = Hash(args[2]);
     var videoHash = Hash(args[3]);
     var destination = Path.Combine(AppContext.BaseDirectory, "animation-smoke-" + Guid.NewGuid().ToString("N") + ".zip");
-    var result = AnimatedPortraitPatch.Export(new(args[1], args[2], "UT_Hero_Card_101", args[4], destination));
+    var result = AnimatedPortraitPatch.Export(new(args[1], args[2], args[3], "UT_Hero_Card_101", args[4], destination));
     Check(Hash(args[2]) == runtimeHash && Hash(args[3]) == videoHash, "real input bundles remain byte-identical");
     using var patchZip = System.IO.Compression.ZipFile.OpenRead(result.ReplacementZip);
     using var restoreZip = System.IO.Compression.ZipFile.OpenRead(result.RestoreZip);
     Check(patchZip.Entries.Select(e => e.FullName).SequenceEqual(restoreZip.Entries.Select(e => e.FullName)), "real patch and restore have identical replacement paths");
-    Check(patchZip.GetEntry(Path.GetRelativePath(args[1], args[3]).Replace('\\', '/')) == null, "ZIP contains no alternate-art slot");
-    foreach (var path in new[] { args[2] })
+    Check(patchZip.Entries.Count(entry => Path.GetFileName(entry.FullName) != "__info") == 2,
+        "ZIP changes only the runtime and official video bundles");
+    Check(patchZip.GetEntry(Path.GetRelativePath(args[1], args[3]).Replace('\\', '/')) != null, "ZIP contains the official alternate-art video slot");
+    foreach (var path in new[] { args[2], args[3] })
     {
         var relative = Path.GetRelativePath(args[1], path).Replace('\\', '/');
         using var entry = restoreZip.GetEntry(relative).Open();
@@ -313,6 +250,7 @@ if (args.Length == 5 && args[0] == "--animation-smoke")
         Check(restoredHash == Hash(path), "restore contains exact original: " + relative);
     }
     Console.WriteLine($"SMOKE ONLY {result.Platform}: {result.ReplacementZip}");
+    return;
 }
 var now = DateTimeOffset.UtcNow;
 Check(!ExportSelectionDialog.MatchesRange(new ModEntry(), 1, now), "unknown date excluded from recent");
@@ -352,7 +290,7 @@ File.WriteAllBytes(fakeUsm, new byte[32]);
 var rejectedZip = Path.Combine(root, "rejected.zip");
 try
 {
-    AnimatedPortraitPatch.Export(new(root, bundle, "UT_Hero_Card_101", fakeUsm, rejectedZip));
+    AnimatedPortraitPatch.Export(new(root, bundle, fakeVideo, "UT_Hero_Card_101", fakeUsm, rejectedZip));
     throw new Exception("renamed file accepted as USM");
 }
 catch (InvalidDataException) { Console.WriteLine("PASS non-USM input rejected"); }

@@ -10,7 +10,7 @@ public sealed class AnimatedPortraitDialog : Form
     private readonly CheckBox _removeGreen = new() { Text = "去绿幕", AutoSize = true, Checked = false };
     private readonly Button _choose = Theme.FlatButton("选择视频");
     private readonly Button _replace = Theme.FlatButton("替换");
-    private readonly Button _restore = Theme.FlatButton("恢复全部动态立绘");
+    private readonly Button _restore = Theme.FlatButton("恢复原资源");
     private readonly Button _export = Theme.FlatButton("导出 ZIP");
     private readonly Button _cancel = Theme.FlatButton("关闭");
     private readonly VideoCropControl _crop = new() { Dock = DockStyle.Fill };
@@ -34,7 +34,7 @@ public sealed class AnimatedPortraitDialog : Form
         _initialFile = initialFile;
         _targetSize = targetSize ?? new Size(880, 1205);
         if (_targetSize.Width <= 0 || _targetSize.Height <= 0) throw new ArgumentOutOfRangeException(nameof(targetSize));
-        Text = "替换动态立绘";
+        Text = "替换为视频 / GIF";
         Font = Theme.UI(9f);
         BackColor = Theme.Bg;
         ForeColor = Theme.Text;
@@ -245,7 +245,7 @@ public sealed class AnimatedPortraitDialog : Form
     private async Task ReplaceAsync()
     {
         if (_operation != null || !_previewReady) return;
-        if (MessageBox.Show(this, "将为当前立绘添加独立视频和加载分支，不覆盖原异画。仍需修改热更新程序集，游戏内显示待验证。\n\n继续替换并保存备份？", "独立动态立绘（实验）",
+        if (MessageBox.Show(this, "将使用游戏已有的视频播放器，并占用异画 VHandCard_13021002 的视频槽位。\n原静态贴图不会改动，操作前会备份两个资源包。\n\n继续替换？", "动态立绘替换",
             MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
         _operation = new CancellationTokenSource();
         SetBusy(true);
@@ -254,8 +254,9 @@ public sealed class AnimatedPortraitDialog : Form
             var token = _operation.Token;
             PortraitReplacement.EnsureGameClosed();
             SetStatus("正在定位目标资源…");
-            var runtime = await Task.Run(() => AnimatedPortraitPatch.FindRuntime(_root, token), token);
-            if (runtime == null) throw new InvalidDataException("缺少热更新程序集，请先在游戏内下载相关资源。");
+            var found = await Task.Run(() => AnimatedPortraitPatch.FindBundles(_root, token), token);
+            if (found.Runtime == null || found.Video == null)
+                throw new InvalidDataException("缺少热更新程序集或 VHandCard_13021002 视频资源，请先让游戏完成资源下载。");
             if (!_animationCurrent) await GenerateAnimationAsync(token);
             string usm = await PortraitVideoConverter.ConvertAsync(_lastInput, _work, PortraitVideoSettings.Load(), ConversionOptions(), token,
                 new Progress<string>(message => _status.Text = message));
@@ -264,10 +265,10 @@ public sealed class AnimatedPortraitDialog : Form
             _cancel.Enabled = false;
             SetStatus("正在验证类型结构、备份并写入…");
             bool removeGreen = _removeGreen.Checked;
-            await Task.Run(() => PortraitReplacement.Apply(new(_root, runtime, _texture, usm, ""),
+            await Task.Run(() => PortraitReplacement.Apply(new(_root, found.Runtime, found.Video, _texture, usm, ""),
                 Path.Combine(_work, "preview.gif"), Path.GetFileName(_lastInput), removeGreen));
             _restore.Visible = _export.Visible = true;
-            SetStatus("已写入并回读校验 · " + Path.GetFileName(_lastInput) + "\n当前为本地动态预览，游戏内显示待确认。");
+            SetStatus("已替换原生视频槽位并回读校验 · " + Path.GetFileName(_lastInput) + "\n当前为本地动态预览，游戏内显示待确认。");
         }
         catch (OperationCanceledException) { SetStatus("已取消 · 未写入本次视频"); }
         catch (Exception ex) { SetStatus("替换未完成：" + ex.Message); }
@@ -277,7 +278,7 @@ public sealed class AnimatedPortraitDialog : Form
     private async Task RestoreAsync()
     {
         if (_operation != null) return;
-        if (MessageBox.Show(this, "恢复到首次动态替换前的资源？这会移除当前资源目录内所有独立动态立绘。", "恢复原资源", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
+        if (MessageBox.Show(this, "恢复到首次动态替换前的两个资源包？", "恢复原资源", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
         _operation = new CancellationTokenSource();
         _writing = true;
         SetBusy(true);
@@ -308,7 +309,7 @@ public sealed class AnimatedPortraitDialog : Form
             var receipt = PortraitReplacement.ReadReceipt(_root);
             if (!await Task.Run(() => PortraitReplacement.IsInstalled(_root, receipt)))
                 throw new IOException("资源已改变，不能导出旧的替换包。");
-            using var save = new SaveFileDialog { Filter = "直接替换 ZIP|*.zip", FileName = _texture + "-动态立绘.zip" };
+            using var save = new SaveFileDialog { Filter = "直接替换 ZIP|*.zip", FileName = _texture + "-动态替换.zip" };
             if (save.ShowDialog(this) != DialogResult.OK) return;
             string history = Path.GetFullPath(Path.Combine(_root, "_原始备份", "动态立绘")) + Path.DirectorySeparatorChar;
             if (Path.GetFullPath(save.FileName).StartsWith(history, StringComparison.OrdinalIgnoreCase))

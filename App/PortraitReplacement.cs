@@ -6,7 +6,7 @@ namespace JixModMaker;
 
 public static class PortraitReplacement
 {
-    public const string SafetyNotice = "实验功能：游戏内显示仍需验证；替换前请关闭游戏。";
+    public const string SafetyNotice = "使用游戏原生视频槽位；替换前请关闭游戏。";
     public sealed record PortraitEntry(string VideoKey, string SourceName, bool RemoveGreen, DateTimeOffset InstalledAt, string Preview);
     public sealed record Receipt(string Texture, string VideoKey, string SourceName, bool RemoveGreen, DateTimeOffset InstalledAt,
         string Preview, string ReplacementZip, string RestoreZip, string BaselineRestoreZip, Dictionary<string, string> Hashes,
@@ -50,8 +50,8 @@ public static class PortraitReplacement
             if (ArchiveMatches(request.Root, previous.BaselineRestoreZip)) previous = null;
             else throw new IOException("资源与上次记录不同，可能已被游戏更新或其他 Mod 改动。请使用新的干净资源副本制作，不能沿用旧备份。");
         }
-        if (previous != null && !previous.VideoKey.StartsWith("JixPortrait_", StringComparison.Ordinal))
-            throw new IOException("当前资源含旧版借用异画补丁。请先恢复旧版备份，或在干净资源副本上制作；不会自动覆盖原异画。");
+        if (previous != null && previous.VideoKey.StartsWith("JixPortrait_", StringComparison.Ordinal))
+            throw new IOException("当前资源含独立动态资源补丁。请先点击“恢复原资源”，再使用原生视频槽位模式。");
         string backup = Path.Combine(HistoryRoot(request.Root), DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(backup);
         string savedPreview = null;
@@ -69,11 +69,9 @@ public static class PortraitReplacement
             using var stream = entry.Open();
             hashes.Add(entry.FullName, Convert.ToHexString(SHA256.HashData(stream)));
         }
-        var portraits = previous?.Portraits == null ? new Dictionary<string, PortraitEntry>() : new(previous.Portraits);
         var now = DateTimeOffset.Now;
-        portraits[request.TextureName] = new(result.VideoKey, sourceName, removeGreen, now, savedPreview);
         var receipt = new Receipt(request.TextureName, result.VideoKey, sourceName, removeGreen, now,
-            savedPreview, result.ReplacementZip, result.RestoreZip, previous?.BaselineRestoreZip ?? result.RestoreZip, hashes, portraits);
+            savedPreview, result.ReplacementZip, result.RestoreZip, previous?.BaselineRestoreZip ?? result.RestoreZip, hashes);
         string stagedState = Path.Combine(backup, "receipt.json");
         File.WriteAllText(stagedState, JsonSerializer.Serialize(receipt));
         EnsureGameClosed();
@@ -95,7 +93,7 @@ public static class PortraitReplacement
     public static void Restore(string root)
     {
         EnsureGameClosed();
-        var receipt = ReadReceipt(root) ?? throw new IOException("没有新版动态立绘替换记录");
+        var receipt = ReadReceipt(root) ?? throw new IOException("没有动态替换记录");
         if (!IsInstalled(root, receipt)) throw new IOException("游戏资源已改变，停止恢复，避免覆盖游戏更新或其他 Mod。");
         Install(root, receipt.BaselineRestoreZip, receipt.ReplacementZip);
         if (!ArchiveMatches(root, receipt.BaselineRestoreZip)) throw new IOException("恢复后的资源校验失败，请保留备份。");

@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <AssemblyName>JixModMaker</AssemblyName>
-    <Version>2.3.0-preview.9</Version>
+    <Version>2.3.0-preview.11</Version>
     <AssemblyVersion>2.3.0.0</AssemblyVersion>
     <FileVersion>2.3.0.0</FileVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

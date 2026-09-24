@@ -98,6 +98,15 @@ internal static class DetailPanelChecks
             }
             Select(new TexRef { Name = "UT_Hero_Bust_101", Kind = ResourceKinds.Texture });
             check(animated.Visible && !animated.Enabled, "unsupported bust does not offer a false dynamic replacement");
+            foreach (string name in new[]
+            {
+                "UT_HandCard_21002", "UT_Event_12703", "UT_MapEvent_31001_JP", "UT_HandCard_21002_sfw",
+                "PlatformEvent", "LandEvent", "UT_HandCard_", "UT_Event_frame"
+            })
+            {
+                Select(new TexRef { Name = name, Kind = ResourceKinds.Texture });
+                check(animated.Visible && !animated.Enabled, "non-portrait resource does not offer experimental playback: " + name);
+            }
             Select(new TexRef { Name = "voice", Kind = ResourceKinds.Audio });
             check(!animated.Enabled, "audio cannot invoke portrait replacement");
             Call("ClearDetails");

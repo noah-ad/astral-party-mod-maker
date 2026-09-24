@@ -15,22 +15,18 @@ if (args[0] == "type")
     return;
 }
 
-if (args[0] == "verify-independent")
+if (args[0] == "verify-native-slot")
 {
-    using var resolver = new DefaultAssemblyResolver();
-    foreach (var directory in args.Skip(2)) resolver.AddSearchDirectory(directory);
-    using var module = ModuleDefinition.ReadModule(args[1], new ReaderParameters { AssemblyResolver = resolver });
-    int checkedMethods = 0;
-    foreach (var type in module.Types.Where(t => t.Namespace is "Jix.DynamicPortrait" or "Jix.DynamicRendering" || t.FullName == "UI.CriMovieManager"))
-    foreach (var method in type.Methods.Where(m => m.HasBody && (type.Namespace is "Jix.DynamicPortrait" or "Jix.DynamicRendering" || m.Name.StartsWith("Jix"))))
-    foreach (var instruction in method.Body.Instructions)
-    {
-        if (instruction.Operand is not MethodReference reference) continue;
-        var resolved = reference.Resolve() ?? throw new Exception("Unresolved: " + reference.FullName);
-        if (resolved.Module != module && !resolved.IsPublic) throw new Exception("Inaccessible: " + reference.FullName);
-        checkedMethods++;
-    }
-    Console.WriteLine("PASS " + checkedMethods + " injected method references resolve against target AOT metadata");
+    using var module = ModuleDefinition.ReadModule(args[1]);
+    if (module.Types.Any(type => type.Namespace is "Jix.DynamicPortrait" or "Jix.DynamicRendering"))
+        throw new Exception("Independent dynamic-resource types are still present");
+    var config = module.Types.Single(type => type.FullName == "SkinStandingPaintingConfigureItem");
+    var helper = config.Methods.Single(method => method.Name == "JixMapAnimatedPortrait");
+    var strings = helper.Body.Instructions.Where(instruction => instruction.OpCode == Mono.Cecil.Cil.OpCodes.Ldstr)
+        .Select(instruction => instruction.Operand as string).ToArray();
+    if (strings.Length != 2 || strings[1] != "VHandCard_13021002")
+        throw new Exception("Unexpected native-slot mapping");
+    Console.WriteLine("PASS native slot mapping: " + strings[0] + " -> " + strings[1]);
     return;
 }
 
@@ -90,7 +86,7 @@ if (args[0] == "find")
     return;
 }
 
-if (args[0] == "il")
+if (args[0] is "il" or "refs")
 {
     using var module = ModuleDefinition.ReadModule(args[1]);
     IEnumerable<TypeDefinition> Walk(IEnumerable<TypeDefinition> types)
@@ -105,7 +101,12 @@ if (args[0] == "il")
     {
         foreach (var method in type.Methods)
         {
-            if (!method.FullName.Contains(args[2], StringComparison.OrdinalIgnoreCase)) continue;
+            if (args[0] == "refs")
+            {
+                if (!method.HasBody || !method.Body.Instructions.Any(i =>
+                    i.Operand?.ToString()?.Contains(args[2], StringComparison.OrdinalIgnoreCase) == true)) continue;
+            }
+            else if (!method.FullName.Contains(args[2], StringComparison.OrdinalIgnoreCase)) continue;
             Console.WriteLine(method.FullName);
             if (args.Length > 3 && args[3] == "names") continue;
             if (method.HasBody)

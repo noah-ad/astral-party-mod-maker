@@ -12,7 +12,10 @@
 稳定发行版：**v2.2.1**。当前源码及本地实验版：**v2.3.0-preview.11**。
 
 - [下载 v2.2.1 Win64 免安装包](https://github.com/noah-ad/astral-party-mod-maker/releases/download/v2.2.1/AstralPartyModMaker-v2.2.1-win64.zip)
+- [下载 v2.3.0-preview.11 Win64 核心预览包](https://github.com/noah-ad/astral-party-mod-maker/releases/download/v2.3.0-preview.11/AstralPartyModMaker-v2.3.0-preview.11-win64-core.zip)
 - [查看全部版本与更新说明](https://github.com/noah-ad/astral-party-mod-maker/releases)
+
+preview.11 的公开附件是 EXE + data 核心包，包含静态 Mod 制作功能，**不含 FFmpeg / Python / CriCodecs，不能执行视频转换**。完整视频运行时只保留本地构建，待第三方再分发条件确认后再公开。
 
 下载 ZIP 后完整解压，双击 `启动 吉星Mod制作器.bat` 或 `JixModMaker.exe`。发行包已包含 .NET 8 运行环境，无需另外安装 SDK 或 Desktop Runtime。
 

@@ -47,7 +47,7 @@ public static class ResourceCategories
         {
             Id = CharacterId,
             Label = "角色 / 皮肤 / 怪物",
-            Description = "角色卡面、细卡、半身、头像、角色照、升级图、怪物立绘",
+            Description = "角色卡面、细卡、半身、头像、角色照、升级图、技能动画、怪物立绘",
             Prefixes = new[] { "UT_Hero_", "UT_Item_PlayerPhoto", "UT_Item_StandingPainting" }
         },
         new() { Id = "hand_card", Label = "手牌 / 技能卡", Description = "对局卡面 UT_HandCard", Prefixes = new[] { "UT_HandCard" } },
@@ -63,7 +63,7 @@ public static class ResourceCategories
         new() { Id = "achieve", Label = "成就 / 战令 / 活动", Description = "成就、战令、活动主题", Prefixes = new[] { "UT_Achieve", "UT_BattlePass_", "UT_Activity_", "UT_Item_Activity", "UT_GachaTheme_", "UT_SkinGroup" } },
         new() { Id = "item", Label = "道具 / 礼物 / 宝箱", Description = "道具、礼物、材料、宝箱", Prefixes = new[] { "UT_Item_Chest", "UT_Item_Gift", "UT_Item_Material", "UT_Item_Hero", "UT_Item_Exchange", "UT_Item_" } },
         new() { Id = "ui_icon", Label = "UI 小图标", Description = "界面图标", Prefixes = new[] { "icon_blj", "UI_blj", "T_UI_" } },
-        new() { Id = "sprite_anim", Label = "角色动作帧", Description = "Fight/Walk/Idle/Hit 等序列帧贴图", Prefixes = new[] { "Fight", "Walk", "Idle", "Hit", "Show", "Die", "Talent", "Eat", "Cry", "Cheer", "Hospitalized", "Commentary", "Electricshock" } },
+        new() { Id = "sprite_anim", Label = "其它角色动作帧", Description = "Fight/Walk/Idle/Hit 等序列帧贴图", Prefixes = new[] { "Fight", "Walk", "Idle", "Hit", "Show", "Die", "Talent", "Eat", "Cry", "Cheer", "Hospitalized", "Commentary", "Electricshock" } },
         new() { Id = "fx", Label = "特效", Description = "粒子、光效、遮罩", Prefixes = new[] { "lizi_blj", "Glow_blj", "baozha_blj", "yuanhuan_blj", "Mask_blj", "Smoke_blj", "tiaodai_blj" }, Advanced = true },
         new() { Id = "lightmap", Label = "光照 / 场景贴图", Description = "光照、线条、纹理贴图", Prefixes = new[] { "Lightmap", "T_Light", "T_Wenli", "T_Line" }, Advanced = true },
         new() { Id = "other", Label = "其它贴图", Description = "未匹配命名规则的贴图", Advanced = true }
@@ -112,6 +112,9 @@ public static class ResourceCategories
 
         return AllId;
     }
+
+    public static bool IsSkillAnimationAtlas(string name)
+        => !string.IsNullOrWhiteSpace(name) && name.StartsWith("Talent", StringComparison.OrdinalIgnoreCase);
 
     public static string Label(string kind, string categoryId)
     {

@@ -96,16 +96,39 @@ internal static class DetailPanelChecks
                 closeDialog.Stop();
                 check(opened, "detail action opens replacement dialog directly");
             }
+            Select(new TexRef
+            {
+                Name = "Talent-001",
+                Kind = ResourceKinds.Texture,
+                CategoryLabel = "角色 / 皮肤 / 怪物",
+                IsSkillAnimation = true,
+                OwnerHeroId = "101",
+                OwnerVariant = "02"
+            });
+            var replaceTexture = (Button)Field("_replaceTextureBtn");
+            var detailHint = (Label)Field("_detailHint");
+            check(animated.Visible && animated.Enabled && animated.Text == "替换技能动画",
+                "skill animation action is explicit and reachable: " + scenario);
+            check(!replaceTexture.Enabled, "packed skill atlas cannot be replaced as one static image: " + scenario);
+            check(detailHint.Text.Contains("原生帧数") && detailHint.Text.Contains("只修改当前资源包"),
+                "skill animation safety scope is visible: " + scenario);
+            var skillText = TextRenderer.MeasureText(animated.Text, animated.Font);
+            check(skillText.Height <= animated.Height && skillText.Width + animated.Padding.Horizontal <= animated.Width,
+                "skill animation button text fits: " + scenario);
             Select(new TexRef { Name = "UT_Hero_Bust_101", Kind = ResourceKinds.Texture });
             check(animated.Visible && !animated.Enabled, "unsupported bust does not offer a false dynamic replacement");
             foreach (string name in new[]
             {
-                "UT_HandCard_21002", "UT_Event_12703", "UT_MapEvent_31001_JP", "UT_HandCard_21002_sfw",
-                "PlatformEvent", "LandEvent", "UT_HandCard_", "UT_Event_frame"
+                "UT_HandCard_21002", "UT_Event_12703", "UT_MapEvent_31001_JP", "UT_HandCard_21002_sfw"
             })
             {
                 Select(new TexRef { Name = name, Kind = ResourceKinds.Texture });
-                check(animated.Visible && !animated.Enabled, "non-portrait resource does not offer experimental playback: " + name);
+                check(animated.Visible && animated.Enabled, "supported card artwork offers dynamic replacement: " + name);
+            }
+            foreach (string name in new[] { "PlatformEvent", "LandEvent", "UT_HandCard_", "UT_Event_frame" })
+            {
+                Select(new TexRef { Name = name, Kind = ResourceKinds.Texture });
+                check(animated.Visible && !animated.Enabled, "unaddressable card artwork stays disabled: " + name);
             }
             Select(new TexRef { Name = "voice", Kind = ResourceKinds.Audio });
             check(!animated.Enabled, "audio cannot invoke portrait replacement");

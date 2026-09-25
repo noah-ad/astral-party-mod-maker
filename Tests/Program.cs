@@ -5,6 +5,116 @@ static void Check(bool condition, string name)
     if (!condition) throw new Exception(name);
     Console.WriteLine("PASS " + name);
 }
+if (args.Length == 4 && args[0] == "--decode-texture")
+{
+    File.WriteAllBytes(args[3], new ModEngine().DecodePng(args[1], long.Parse(args[2])));
+    return;
+}
+if (args.Length == 4 && args[0] == "--patch-card-dll")
+{
+    var original = File.ReadAllBytes(args[1]);
+    var dependencies = Directory.EnumerateFiles(Path.GetDirectoryName(args[1])!, "*.dll")
+        .ToDictionary(path => Path.GetFileNameWithoutExtension(path), File.ReadAllBytes, StringComparer.OrdinalIgnoreCase);
+    var patched = AnimatedPortraitPatch.PatchAssembly(original, args[3], AnimatedPortraitPatch.VideoSlot, dependencies);
+    File.WriteAllBytes(args[2], patched);
+    using var resolver = new Mono.Cecil.DefaultAssemblyResolver();
+    resolver.AddSearchDirectory(Path.GetDirectoryName(args[1])!);
+    using var module = Mono.Cecil.ModuleDefinition.ReadModule(new MemoryStream(patched),
+        new Mono.Cecil.ReaderParameters { AssemblyResolver = resolver });
+    var helperNames = new[]
+    {
+        "JixMapAnimatedCard", "JixCardVideoLayer", "JixCardVideoLayout",
+        "JixPrepareAnimatedCard", "JixPrepareCardGraph", "JixCanAttachCardGraph"
+    };
+    foreach (var name in helperNames)
+        Check(module.Types.SelectMany(t => t.Methods).Count(m => m.Name == name && m.HasBody) == 1,
+            "real card patch contains one " + name);
+    var renderer = module.GetType("UI.CommonUIManager").Methods.Single(m => m.Name == "RendererCardContent");
+    Check(renderer.Body.Instructions.Any(i => i.Operand is Mono.Cecil.MethodReference m && m.Name == "JixPrepareAnimatedCard"),
+        "real card renderer enters through guarded preparation helper");
+    var bridge = module.GetType("UI.CriManaMovieBridge").Methods.Single(m => m.Name == "AddVideoGraph");
+    Check(bridge.Body.Instructions.Any(i => i.Operand is Mono.Cecil.MethodReference m && m.Name == "JixCanAttachCardGraph"),
+        "real movie bridge rejects stale graph callbacks");
+    using var rewritten = new MemoryStream();
+    module.Write(rewritten);
+    using var reopened = Mono.Cecil.ModuleDefinition.ReadModule(new MemoryStream(rewritten.ToArray()),
+        new Mono.Cecil.ReaderParameters { AssemblyResolver = resolver });
+    Check(reopened.GetType("UI.CommonUIManager").Methods.Any(m => m.Name == "JixMapAnimatedCard"),
+        "patched real DLL survives a second Cecil round trip");
+    Console.WriteLine("PATCHED COPY " + Path.GetFullPath(args[2]));
+    return;
+}
+if (args.Length == 3 && args[0] == "--inspect-skill")
+{
+    var info = SkillAnimationEngine.Inspect(args[1], long.Parse(args[2]));
+    Check(info.FrameNames.Count > 1, "skill atlas contains an ordered Sprite sequence");
+    Console.WriteLine($"{info.TextureName}: {info.FrameNames.Count} frames, {info.FrameWidth}x{info.FrameHeight}, atlas {info.AtlasWidth}x{info.AtlasHeight}");
+    return;
+}
+if (args.Length == 4 && args[0] == "--decode-skill-frame")
+{
+    File.WriteAllBytes(args[3], SkillAnimationEngine.DecodeFramePreview(args[1], long.Parse(args[2]), 0));
+    return;
+}
+if (args.Length == 3 && args[0] == "--catalog-owner")
+{
+    var owners = CatalogOwnership.Load(args[1], new[] { args[2] });
+    Check(owners.TryGetValue(args[2], out var owner), "catalog maps the animation bundle to a character");
+    Console.WriteLine($"{args[2]} -> {owner.CatalogKey} ({owner.HeroId}/{owner.Variant})");
+    return;
+}
+if (args.Length == 2 && args[0] == "--index-skill")
+{
+    var timer = System.Diagnostics.Stopwatch.StartNew();
+    var service = new IndexService();
+    var index = service.Load(args[1], heroOnly: false, includeHotCache: true, recursive: false)
+        ?? service.Build(args[1], heroOnly: false, includeHotCache: true, recursive: false);
+    service.Save(index);
+    var skill = index.Items.First(item => item.Bundle.Equals("17f54c024eb7245b398b7a84b3f4ec42.bundle", StringComparison.OrdinalIgnoreCase)
+        && item.Name == "Talent-001");
+    Check(skill.IsSkillAnimation && skill.OwnerHeroId == "101" && skill.CategoryId == ResourceCategories.CharacterId,
+        "cached Talent atlas is enriched into Hero 101 without rescanning bundles");
+    Console.WriteLine($"INDEX LOAD {timer.ElapsedMilliseconds} ms");
+    return;
+}
+if (args.Length == 2 && args[0] == "--index-profile")
+{
+    var timer = System.Diagnostics.Stopwatch.StartNew();
+    string cachePath = IndexService.CachePath(args[1], heroOnly: false, includeHotCache: true, recursive: false);
+    var index = System.Text.Json.JsonSerializer.Deserialize<GameIndex>(File.ReadAllText(cachePath));
+    Console.WriteLine($"DESERIALIZE {timer.ElapsedMilliseconds} ms");
+    timer.Restart();
+    IndexService.ComputeSourceStamp(args[1], includeHotCache: true, recursive: false);
+    Console.WriteLine($"SOURCE STAMP {timer.ElapsedMilliseconds} ms");
+    timer.Restart();
+    IndexService.ComputeQuickSourceStamp(args[1], includeHotCache: true, recursive: false);
+    Console.WriteLine($"QUICK STAMP {timer.ElapsedMilliseconds} ms");
+    timer.Restart();
+    CatalogOwnership.Load(args[1], index.Items.Select(item => item.Bundle).Distinct(StringComparer.OrdinalIgnoreCase));
+    Console.WriteLine($"CATALOG OWNERS {timer.ElapsedMilliseconds} ms");
+    return;
+}
+if (args.Length == 5 && args[0] == "--skill-smoke")
+{
+    string sourceHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(args[1])));
+    File.Copy(args[1], args[4], true);
+    string work = Path.Combine(Path.GetTempPath(), "JixSkillSmoke-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(work);
+    try
+    {
+        var before = SkillAnimationEngine.Inspect(args[4], long.Parse(args[2]));
+        var after = SkillAnimationEngine.ReplaceAsync(args[4], long.Parse(args[2]), before.TextureName, args[3],
+            Path.Combine(work, "backup"), Path.GetFileName(args[4]), Path.Combine(work, "work"),
+            new PortraitVideoConverter.Options(), CancellationToken.None).GetAwaiter().GetResult();
+        Check(before.FrameNames.SequenceEqual(after.FrameNames), "skill replacement preserves native frame order and count");
+        Check(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(args[1]))) == sourceHash,
+            "skill smoke test leaves the game bundle byte-identical");
+        Check(!File.ReadAllBytes(args[4]).SequenceEqual(File.ReadAllBytes(args[1])), "skill atlas copy is replaced");
+        Console.WriteLine("SKILL COPY " + Path.GetFullPath(args[4]));
+    }
+    finally { try { Directory.Delete(work, true); } catch { } }
+    return;
+}
 if (args.Length == 2 && args[0] == "--crop-ui")
 {
     Exception failure = null;
@@ -164,6 +274,9 @@ if (args.Length == 5 && args[0] == "--animation-install-smoke")
 
 Check(NameParser.Parse("UT_Hero_Card_135_06_0").Skin == "皮肤06", "new hero and skin 06");
 Check(NameParser.Parse("UT_Hero_Card_135").Skin == "原皮", "base skin label");
+var groupedSkill = NameParser.Parse("Talent-001", "115", "02", true, false);
+Check(groupedSkill.GroupKey == "角色 115" && groupedSkill.Skin == "皮肤02" && groupedSkill.Kind == "SkillAnimation",
+    "skill animation groups with its owning character skin");
 var landscapeCrop = VideoCrop.Fit(1920, 1080, 880, 1205);
 Check(Math.Abs(landscapeCrop.Width * 1920 / (landscapeCrop.Height * 1080) - 880d / 1205) < .000001, "landscape video is cropped to portrait aspect, not squeezed");
 var edgeCrop = landscapeCrop.Move(5, -2);
@@ -198,7 +311,9 @@ try
     throw new Exception("one video slot accepted two portrait mappings");
 }
 catch (InvalidOperationException) { Console.WriteLine("PASS native video slot remains single-owner"); }
-foreach (string unsupported in new[] { "UT_HandCard_21002", "UT_Event_12703", "UT_MapEvent_31001", "UT_Hero_Card_" })
+foreach (string supported in new[] { "UT_HandCard_21002", "UT_Event_12703", "UT_MapEvent_31001", "UT_HandCard_21002_sfw" })
+    Check(AnimatedPortraitPatch.IsSupportedTarget(supported), "dynamic card target accepted: " + supported);
+foreach (string unsupported in new[] { "UT_Hero_Card_", "UT_HandCard_", "UT_Event_frame", "PlatformEvent", "LandEvent" })
 {
     try { AnimatedPortraitPatch.PatchAssembly(originalAssembly, unsupported, AnimatedPortraitPatch.VideoSlot); throw new Exception("unsupported dynamic target accepted"); }
     catch (ArgumentException) { Console.WriteLine("PASS unsupported dynamic target rejected: " + unsupported); }
@@ -228,13 +343,14 @@ if (args.Length == 2 && args[0] == "--animation-find")
     Console.WriteLine(found.Video);
     return;
 }
-if (args.Length == 5 && args[0] == "--animation-smoke")
+if (args.Length is 5 or 6 && args[0] == "--animation-smoke")
 {
     string Hash(string path) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)));
     var runtimeHash = Hash(args[2]);
     var videoHash = Hash(args[3]);
     var destination = Path.Combine(AppContext.BaseDirectory, "animation-smoke-" + Guid.NewGuid().ToString("N") + ".zip");
-    var result = AnimatedPortraitPatch.Export(new(args[1], args[2], args[3], "UT_Hero_Card_101", args[4], destination));
+    string animationTarget = args.Length == 6 ? args[5] : "UT_Hero_Card_101";
+    var result = AnimatedPortraitPatch.Export(new(args[1], args[2], args[3], animationTarget, args[4], destination));
     Check(Hash(args[2]) == runtimeHash && Hash(args[3]) == videoHash, "real input bundles remain byte-identical");
     using var patchZip = System.IO.Compression.ZipFile.OpenRead(result.ReplacementZip);
     using var restoreZip = System.IO.Compression.ZipFile.OpenRead(result.RestoreZip);
@@ -249,7 +365,7 @@ if (args.Length == 5 && args[0] == "--animation-smoke")
         var restoredHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(entry));
         Check(restoredHash == Hash(path), "restore contains exact original: " + relative);
     }
-    Console.WriteLine($"SMOKE ONLY {result.Platform}: {result.ReplacementZip}");
+    Console.WriteLine($"SMOKE ONLY {animationTarget} / {result.Platform}: {result.ReplacementZip}");
     return;
 }
 var now = DateTimeOffset.UtcNow;
@@ -425,8 +541,11 @@ var first = IndexService.ComputeSourceStamp(root, false, false);
 File.WriteAllBytes(bundle, new byte[] { 1, 2 });
 Check(first != IndexService.ComputeSourceStamp(root, false, false), "same filename update invalidates index");
 first = IndexService.ComputeSourceStamp(root, false, false);
+var quickBeforeNewBundle = IndexService.ComputeQuickSourceStamp(root, false, false);
 File.WriteAllBytes(Path.Combine(root, "new-hero.bundle"), new byte[] { 3 });
 Check(first != IndexService.ComputeSourceStamp(root, false, false), "new bundle invalidates index");
+Check(quickBeforeNewBundle != IndexService.ComputeQuickSourceStamp(root, false, false),
+    "new bundle invalidates the fast startup fingerprint");
 Console.WriteLine("All regression checks passed.");
 var wrapped = Path.Combine(root, "hash-a", "hash-b");
 Directory.CreateDirectory(wrapped);
@@ -438,8 +557,17 @@ using (var zip = System.IO.Compression.ZipFile.OpenRead(output))
 {
     Check(zip.Entries.Select(e => e.FullName).Order().SequenceEqual(new[] { "hash-a/hash-b/__data", "hash-a/hash-b/__info", "test.bundle" }), "replacement ZIP preserves exact paths without wrappers");
     using var data = zip.GetEntry("hash-a/hash-b/__data").Open();
-    Check(data.ReadByte() == 4 && data.ReadByte() == 5 && data.ReadByte() == -1, "replacement bytes unchanged");
+Check(data.ReadByte() == 4 && data.ReadByte() == 5 && data.ReadByte() == -1, "replacement bytes unchanged");
 }
+var externalBackupRoot = Path.Combine(root, "game", "_原始备份");
+var externalWrappedA = Path.Combine(root, "hot", "a", "first", "__data");
+var externalWrappedB = Path.Combine(root, "hot", "b", "second", "__data");
+var externalBackupA = ResourceLocator.BackupPath(externalWrappedA, externalBackupRoot, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bundle");
+var externalBackupB = ResourceLocator.BackupPath(externalWrappedB, externalBackupRoot, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bundle");
+Check(!string.Equals(externalBackupA, externalBackupB, StringComparison.OrdinalIgnoreCase) &&
+    Path.GetFileName(externalBackupA) == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bundle" &&
+    Path.GetFileName(externalBackupB) == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.bundle",
+    "external hot-cache bundles receive distinct logical backup names");
 try
 {
     ReplacementZip.Export(wrapped, new[] { bundle }, output);
@@ -485,6 +613,53 @@ var ui = new Thread(() =>
             using var shot = new System.Drawing.Bitmap(animation.Width, animation.Height);
             animation.DrawToBitmap(shot, new System.Drawing.Rectangle(0, 0, animation.Width, animation.Height));
             shot.Save(Path.Combine(AppContext.BaseDirectory, $"animation-dialog-{scale}.png"));
+        }
+        foreach (float scale in new[] { 1f, 1.5f })
+        {
+            var skillAsset = new TexRef
+            {
+                BundlePath = Path.Combine(root, "skill.bundle"),
+                BundleName = "skill.bundle",
+                Name = "Talent-001",
+                Display = "技能动画 · Talent-001",
+                Kind = ResourceKinds.Texture,
+                IsSkillAnimation = true,
+                OwnerHeroId = "101",
+                Width = 3024,
+                Height = 3024
+            };
+            var skillInfo = new SkillAnimationInfo("Talent-001", 42, 3024, 3024, 375, 350,
+                Enumerable.Range(1, 52).Select(i => "Talent_" + i.ToString("000")).ToArray());
+            using var skill = new SkillAnimationDialog(skillAsset, skillInfo, Path.Combine(root, "backups"));
+            skill.StartPosition = FormStartPosition.Manual;
+            skill.Location = new System.Drawing.Point(-3500, -3500);
+            skill.Scale(new System.Drawing.SizeF(scale, scale));
+            skill.Show();
+            Application.DoEvents();
+            IEnumerable<Control> SkillControls(Control parent) => parent.Controls.Cast<Control>()
+                .SelectMany(c => new[] { c }.Concat(SkillControls(c)));
+            var controls = SkillControls(skill).ToArray();
+            Check(!controls.OfType<CheckBox>().Single(c => c.Text == "去绿幕").Checked,
+                "skill green removal is opt-in at scale " + scale);
+            Check(controls.OfType<VideoCropControl>().Single().Visible,
+                "skill crop surface is visible at scale " + scale);
+            var skillButton = controls.OfType<Button>().Single(c => c.Text == "替换技能动画");
+            Check(skillButton.Visible, "skill replacement action is visible at scale " + scale);
+            var footer = skill.Controls[0].Controls.OfType<FlowLayoutPanel>().Single();
+            Check(footer.Controls.Cast<Control>().Where(c => c.Visible)
+                .All(c => c.Left >= 0 && c.Right <= footer.ClientSize.Width && c.Bottom <= footer.ClientSize.Height),
+                "skill action row fits at scale " + scale);
+            foreach (var button in footer.Controls.OfType<Button>().Where(button => button.Visible))
+            {
+                var measured = TextRenderer.MeasureText(button.Text, button.Font);
+                Check(measured.Width + button.Padding.Horizontal <= button.Width && measured.Height <= button.Height,
+                    "skill dialog button text fits: " + button.Text + " at scale " + scale);
+            }
+            using var shot = new System.Drawing.Bitmap(skill.Width, skill.Height);
+            skill.DrawToBitmap(shot, new System.Drawing.Rectangle(0, 0, skill.Width, skill.Height));
+            shot.Save(Path.Combine(AppContext.BaseDirectory, $"skill-dialog-{scale}.png"));
+            skill.Close();
+            Application.DoEvents();
         }
         if (File.Exists(Path.Combine(root, "green animation.gif")))
         {

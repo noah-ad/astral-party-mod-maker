@@ -19,15 +19,18 @@ CRIWARE 对 `CriManaUsmAsset` 的说明：
 
 ## 当前实现
 
-preview.11 只使用游戏已有的视频播放路径，不再把独立视频塞进热更新 DLL：
+preview.12 不再向热更新 DLL 注入独立视频资源，动态立绘、手牌和事件共用一个游戏已有的视频槽位：
 
 1. FFmpeg 将视频或 GIF 解码、裁剪并生成颜色与透明度画面。
 2. CriCodecs 将两路 MPEG-1 数据封装成 USM。
 3. 工具只替换 `VHandCard_13021002` 对象内原有的 USM 字节，并保持循环播放。
-4. `SkinStandingPaintingConfigureItem.GetCharacter()` 和 `GetCharacterInGame()` 的 tuple 构造经过一个小型 `JixMapAnimatedPortrait` 映射函数。返回的贴图名等于所选 `UT_Hero_Card_*` 时，映射为 `(VHandCard_13021002, true)`；其它返回值完全保留。
-5. 游戏原有的 `UI.HeroPanel` 视频分支和 `CriMovieManager` 负责加载、显示与循环，补丁不新增播放器、缓存、网格或资源类型。
+4. 角色立绘通过 `JixMapAnimatedPortrait` 精确映射到 `(VHandCard_13021002, true)`，其它返回值保持不变。
+5. 手牌、事件和地图事件通过 `JixMapAnimatedCard` 克隆当前 `CardView`，只替换副本的 Key / IsVideo；卡牌渲染器继续使用原有前景视频图层，并记录请求 key，拒绝异步返回到已被复用图层的旧视频。
+6. 游戏原有的 `UI.HeroPanel`、卡牌视频图层和 `CriMovieManager` 负责加载、显示与循环，补丁不新增播放器或资源类型。
 
-原静态 Texture2D 不会修改。这个方案一次只能绑定一个角色，并占用原异画槽位；原游戏其它使用该槽位的位置也可能显示替换后的视频。手牌、事件和地图事件的独立动态实现已经删除。
+原静态 Texture2D 不会修改。这个方案一次只能绑定一个动态目标，并占用原异画槽位；原游戏其它使用该槽位的位置也可能显示替换后的视频。
+
+技能动画使用另一条独立路径：解析 Addressables catalog，把仍在使用的 `Talent*` 图集归到对应角色 / 皮肤；视频按原生比例裁剪并采样到原帧数后，只重建现有 Sprite 图集像素。AnimationClip、Sprite 元数据、热更新 DLL 和异画槽位都不修改。
 
 ## 封包保护
 
@@ -66,6 +69,8 @@ PC 与 Android 的真实资源副本均通过：
 - 第二角色占用同一槽位时拒绝；
 - 文件被其它程序修改时拒绝恢复；
 - 恢复后两个 bundle 与首次替换前逐字节一致。
+- 当前 PC 运行时的手牌和事件补丁通过 Cecil 二次写入、所有注入 helper 回读及完整导出 ZIP 校验。
+- `Talent-001` 真实 bundle 副本通过 52 帧重建、首帧回读和源 bundle 哈希不变校验。
 
 所有安装测试均在隔离副本中执行，没有自动写入用户游戏。真实 PC / Android 游戏内播放、透明混合、性能和版本校验仍需人工验证。
 

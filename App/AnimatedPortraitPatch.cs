@@ -10,7 +10,13 @@ namespace JixModMaker;
 public static class AnimatedPortraitPatch
 {
     public const string VideoSlot = "VHandCard_13021002";
-    private const string HelperName = "JixMapAnimatedPortrait";
+    private const string PortraitHelperName = "JixMapAnimatedPortrait";
+    private const string CardMapHelperName = "JixMapAnimatedCard";
+    private const string CardLayerHelperName = "JixCardVideoLayer";
+    private const string CardLayoutHelperName = "JixCardVideoLayout";
+    private const string CardPrepareHelperName = "JixPrepareAnimatedCard";
+    private const string GraphPrepareHelperName = "JixPrepareCardGraph";
+    private const string GraphAttachHelperName = "JixCanAttachCardGraph";
 
     public sealed record Request(string Root, string RuntimeBundle, string VideoBundle, string TextureName, string UsmFile, string Destination);
     public sealed record Result(string ReplacementZip, string RestoreZip, string VideoKey, string Platform);
@@ -20,10 +26,19 @@ public static class AnimatedPortraitPatch
         name.Length > "UT_Hero_Card_".Length &&
         name["UT_Hero_Card_".Length] is >= '0' and <= '9';
 
+    public static bool IsCardArtwork(string name) => HasNumericSuffix(name, "UT_HandCard_") ||
+        HasNumericSuffix(name, "UT_Event_") || HasNumericSuffix(name, "UT_MapEvent_");
+
+    public static bool IsSupportedTarget(string name) => IsCharacterPortrait(name) || IsCardArtwork(name);
+
+    private static bool HasNumericSuffix(string name, string prefix) => name != null &&
+        name.StartsWith(prefix, StringComparison.Ordinal) && name.Length > prefix.Length &&
+        name[prefix.Length] is >= '0' and <= '9';
+
     public static byte[] PatchAssembly(byte[] original, string texture, string videoKey,
         IReadOnlyDictionary<string, byte[]> dependencies = null)
     {
-        if (!IsCharacterPortrait(texture)) throw new ArgumentException("动态替换仅支持角色立绘");
+        if (!IsSupportedTarget(texture)) throw new ArgumentException("动态替换仅支持角色立绘、手牌和事件卡");
         if (!string.Equals(videoKey, VideoSlot, StringComparison.Ordinal))
             throw new InvalidDataException("视频包不是已验证的原生异画槽位：" + VideoSlot);
 
@@ -35,17 +50,31 @@ public static class AnimatedPortraitPatch
             module.Types.SelectMany(t => t.Methods).Any(m => m.Name == "JixLoadIndependentPortrait"))
             throw new InvalidOperationException("检测到独立动态资源补丁。请先恢复该版本的首次备份，再使用原生视频槽位模式。");
 
-        var config = module.Types.SingleOrDefault(t => t.FullName == "SkinStandingPaintingConfigureItem") ??
-            throw new InvalidOperationException("没有找到立绘配置类型，游戏版本不兼容");
-        var existing = config.Methods.SingleOrDefault(m => m.Name == HelperName);
-        if (existing != null)
+        var existingPortrait = module.Types.SelectMany(t => t.Methods).SingleOrDefault(m => m.Name == PortraitHelperName);
+        var existingCard = module.Types.SelectMany(t => t.Methods).SingleOrDefault(m => m.Name == CardMapHelperName);
+        var expected = IsCharacterPortrait(texture) ? existingPortrait : existingCard;
+        if (existingPortrait != null || existingCard != null)
         {
-            var strings = existing.Body.Instructions.Where(i => i.OpCode == OpCodes.Ldstr)
+            var strings = expected?.Body?.Instructions.Where(i => i.OpCode == OpCodes.Ldstr)
                 .Select(i => i.Operand as string).ToArray();
-            if (strings.SequenceEqual(new[] { texture, videoKey })) return original.ToArray();
-            throw new InvalidOperationException("原生视频槽位已用于其他立绘，请先恢复原资源再替换角色。");
+            if ((existingPortrait == null || existingCard == null) && strings?.SequenceEqual(new[] { texture, videoKey }) == true)
+                return original.ToArray();
+            throw new InvalidOperationException("原生视频槽位已用于其他动态资源，请先恢复原资源再替换。");
         }
 
+        if (IsCharacterPortrait(texture)) PatchCharacterPortrait(module, texture, videoKey);
+        else PatchCardArtwork(module, texture, videoKey);
+
+        using var output = new MemoryStream();
+        module.Write(output);
+        return output.ToArray();
+    }
+
+    private static void PatchCharacterPortrait(ModuleDefinition module, string texture, string videoKey)
+    {
+
+        var config = module.Types.SingleOrDefault(t => t.FullName == "SkinStandingPaintingConfigureItem") ??
+            throw new InvalidOperationException("没有找到立绘配置类型，游戏版本不兼容");
         var methods = new[] { "GetCharacter", "GetCharacterInGame" }
             .Select(name => config.Methods.SingleOrDefault(m => m.Name == name && m.Parameters.Count == 0 && m.HasBody) ??
                 throw new InvalidOperationException("没有找到 " + name + "，游戏版本不兼容"))
@@ -64,7 +93,7 @@ public static class AnimatedPortraitPatch
         equality.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
         equality.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
         var tupleConstructor = (MethodReference)constructors[0].Operand;
-        var map = new MethodDefinition(HelperName, MethodAttributes.Private | MethodAttributes.Static, methods[0].ReturnType);
+        var map = new MethodDefinition(PortraitHelperName, MethodAttributes.Private | MethodAttributes.Static, methods[0].ReturnType);
         map.Parameters.Add(new ParameterDefinition("key", ParameterAttributes.None, module.TypeSystem.String));
         map.Parameters.Add(new ParameterDefinition("isVideo", ParameterAttributes.None, module.TypeSystem.Boolean));
         config.Methods.Add(map);
@@ -87,10 +116,317 @@ public static class AnimatedPortraitPatch
             instruction.OpCode = OpCodes.Call;
             instruction.Operand = map;
         }
+    }
 
-        using var output = new MemoryStream();
-        module.Write(output);
-        return output.ToArray();
+    private static void PatchCardArtwork(ModuleDefinition module, string texture, string videoKey)
+    {
+        TypeDefinition RequireType(string fullName) => module.GetType(fullName) ??
+            throw new InvalidOperationException("没有找到 " + fullName + "，游戏版本不兼容");
+        static FieldDefinition RequireField(TypeDefinition type, string name) => type.Fields.SingleOrDefault(f => f.Name == name) ??
+            throw new InvalidOperationException("没有找到 " + type.FullName + "." + name + "，游戏版本不兼容");
+        static MethodDefinition RequireMethod(TypeDefinition type, string name, Func<MethodDefinition, bool> match) =>
+            type.Methods.SingleOrDefault(m => m.Name == name && match(m)) ??
+            throw new InvalidOperationException("没有找到 " + type.FullName + "." + name + "，游戏版本不兼容");
+
+        var card = RequireType("CardView");
+        var common = RequireType("UI.CommonUIManager");
+        var uiCard = RequireType("UI.UICom_Card");
+        var movieManager = RequireType("UI.CriMovieManager");
+        var movieBridge = RequireType("UI.CriManaMovieBridge");
+        var graph = RequireType("FairyGUI.GGraph");
+        var gObject = RequireType("FairyGUI.GObject");
+        var gearDisplay = RequireType("FairyGUI.GearDisplay2");
+        var controller = RequireType("FairyGUI.Controller");
+        var keyField = RequireField(card, "Key");
+        var isVideoField = RequireField(card, "IsVideo");
+        var cardTypeField = RequireField(card, "CardType");
+        var frontGraphField = RequireField(uiCard, "video_FrontCard");
+        var fullGraphField = RequireField(uiCard, "video_FullCard");
+        var frontStateField = RequireField(uiCard, "frontState");
+        var graphVideoKey = RequireField(graph, "VideoKey");
+        var bridgeVideoKey = RequireField(movieBridge, "_videoKey");
+        var renderer = RequireMethod(common, "RendererCardContent", method => method.HasBody && method.Parameters.Count >= 2 &&
+            method.Parameters[0].ParameterType.FullName == uiCard.FullName && method.Parameters[1].ParameterType.FullName == card.FullName);
+        var addVideoGraph = RequireMethod(movieBridge, "AddVideoGraph", method => method.HasBody && method.Parameters.Count == 1 &&
+            method.Parameters[0].ParameterType.FullName == graph.FullName);
+        var cardConstructor = RequireMethod(card, ".ctor", method => !method.IsStatic && method.Parameters.Count == 0);
+        var getGear = RequireMethod(gObject, "GetGear", method => method.Parameters.Count == 1 &&
+            method.Parameters[0].ParameterType.MetadataType == MetadataType.Int32);
+        var handleController = RequireMethod(gObject, "HandleControllerChanged", method => method.Parameters.Count == 1 &&
+            method.Parameters[0].ParameterType.FullName == controller.FullName);
+        var getPageId = RequireMethod(controller, "GetPageId", method => method.Parameters.Count == 1 &&
+            method.Parameters[0].ParameterType.MetadataType == MetadataType.Int32);
+        var pages = gearDisplay.Properties.SingleOrDefault(p => p.Name == "pages" && p.GetMethod != null && p.SetMethod != null) ??
+            throw new InvalidOperationException("没有找到卡牌视频图层页配置，游戏版本不兼容");
+        var visible = gObject.Properties.SingleOrDefault(p => p.Name == "visible" && p.SetMethod != null) ??
+            throw new InvalidOperationException("没有找到卡牌视频图层显示状态，游戏版本不兼容");
+
+        if (uiCard.Fields.Any(f => f.Name is "JixOriginalVideoPages" or "JixVideoPagesOverridden") ||
+            graph.Fields.Any(f => f.Name is "JixCardRequestTracked" or "JixCardRequestedKey"))
+            throw new InvalidOperationException("检测到不完整的旧版动态卡牌补丁，请先恢复原资源。");
+
+        var equality = new MethodReference("op_Equality", module.TypeSystem.Boolean, module.TypeSystem.String) { HasThis = false };
+        equality.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
+        equality.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
+
+        var originalPages = new FieldDefinition("JixOriginalVideoPages", FieldAttributes.Assembly, new ArrayType(module.TypeSystem.String));
+        var pagesOverridden = new FieldDefinition("JixVideoPagesOverridden", FieldAttributes.Assembly, module.TypeSystem.Boolean);
+        uiCard.Fields.Add(originalPages);
+        uiCard.Fields.Add(pagesOverridden);
+        var requestTracked = new FieldDefinition("JixCardRequestTracked", FieldAttributes.Assembly, module.TypeSystem.Boolean);
+        var requestedKey = new FieldDefinition("JixCardRequestedKey", FieldAttributes.Assembly, module.TypeSystem.String);
+        graph.Fields.Add(requestTracked);
+        graph.Fields.Add(requestedKey);
+
+        var map = new MethodDefinition(CardMapHelperName, MethodAttributes.Assembly | MethodAttributes.Static, card);
+        map.Parameters.Add(new ParameterDefinition("card", ParameterAttributes.None, card));
+        map.Body.InitLocals = true;
+        var clone = new VariableDefinition(card);
+        map.Body.Variables.Add(clone);
+        common.Methods.Add(map);
+        var il = map.Body.GetILProcessor();
+        var unchanged = Instruction.Create(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, unchanged);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, isVideoField);
+        il.Emit(OpCodes.Brtrue, unchanged);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, keyField);
+        il.Emit(OpCodes.Ldstr, texture);
+        il.Emit(OpCodes.Call, equality);
+        il.Emit(OpCodes.Brfalse, unchanged);
+        il.Emit(OpCodes.Newobj, cardConstructor);
+        il.Emit(OpCodes.Stloc, clone);
+        foreach (var field in card.Fields.Where(f => !f.IsStatic && (f.IsPublic || f.IsAssembly)))
+        {
+            il.Emit(OpCodes.Ldloc, clone);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, field);
+            il.Emit(OpCodes.Stfld, field);
+        }
+        il.Emit(OpCodes.Ldloc, clone);
+        il.Emit(OpCodes.Ldstr, videoKey);
+        il.Emit(OpCodes.Stfld, keyField);
+        il.Emit(OpCodes.Ldloc, clone);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, isVideoField);
+        il.Emit(OpCodes.Ldloc, clone);
+        il.Emit(OpCodes.Ret);
+        il.Append(unchanged);
+        il.Emit(OpCodes.Ret);
+
+        var layer = new MethodDefinition(CardLayerHelperName, MethodAttributes.Assembly | MethodAttributes.Static, module.TypeSystem.Int32);
+        layer.Parameters.Add(new ParameterDefinition("card", ParameterAttributes.None, card));
+        common.Methods.Add(layer);
+        il = layer.Body.GetILProcessor();
+        var originalLayer = Instruction.Create(OpCodes.Ldarg_0);
+        var zeroLayer = Instruction.Create(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, zeroLayer);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, cardTypeField);
+        il.Emit(OpCodes.Brtrue, originalLayer);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, isVideoField);
+        il.Emit(OpCodes.Brfalse, originalLayer);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, keyField);
+        il.Emit(OpCodes.Ldstr, videoKey);
+        il.Emit(OpCodes.Call, equality);
+        il.Emit(OpCodes.Brfalse, originalLayer);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+        il.Append(originalLayer);
+        il.Emit(OpCodes.Ldfld, cardTypeField);
+        il.Emit(OpCodes.Ret);
+        il.Append(zeroLayer);
+        il.Emit(OpCodes.Ret);
+
+        var prepareGraph = new MethodDefinition(GraphPrepareHelperName, MethodAttributes.Assembly | MethodAttributes.Static, module.TypeSystem.Void);
+        prepareGraph.Parameters.Add(new ParameterDefinition("key", ParameterAttributes.None, module.TypeSystem.String));
+        prepareGraph.Parameters.Add(new ParameterDefinition("graph", ParameterAttributes.None, graph));
+        movieManager.Methods.Add(prepareGraph);
+        il = prepareGraph.Body.GetILProcessor();
+        var trackRequest = Instruction.Create(OpCodes.Ldarg_1);
+        var prepareDone = Instruction.Create(OpCodes.Ret);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, prepareDone);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldfld, graphVideoKey);
+        il.Emit(OpCodes.Call, equality);
+        il.Emit(OpCodes.Brtrue, trackRequest);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stfld, graphVideoKey);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, visible.SetMethod);
+        il.Append(trackRequest);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, requestTracked);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stfld, requestedKey);
+        il.Append(prepareDone);
+
+        var canAttach = new MethodDefinition(GraphAttachHelperName, MethodAttributes.Assembly | MethodAttributes.Static, module.TypeSystem.Boolean);
+        canAttach.Parameters.Add(new ParameterDefinition("key", ParameterAttributes.None, module.TypeSystem.String));
+        canAttach.Parameters.Add(new ParameterDefinition("graph", ParameterAttributes.None, graph));
+        movieManager.Methods.Add(canAttach);
+        il = canAttach.Body.GetILProcessor();
+        var allow = Instruction.Create(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, allow);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldfld, requestTracked);
+        il.Emit(OpCodes.Brfalse, allow);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldfld, requestedKey);
+        il.Emit(OpCodes.Call, equality);
+        il.Emit(OpCodes.Ret);
+        il.Append(allow);
+        il.Emit(OpCodes.Ret);
+
+        var addIl = addVideoGraph.Body.GetILProcessor();
+        var addEntry = addVideoGraph.Body.Instructions[0];
+        foreach (var instruction in new[]
+        {
+            Instruction.Create(OpCodes.Ldarg_0), Instruction.Create(OpCodes.Ldfld, bridgeVideoKey),
+            Instruction.Create(OpCodes.Ldarg_1), Instruction.Create(OpCodes.Call, canAttach),
+            Instruction.Create(OpCodes.Brtrue, addEntry), Instruction.Create(OpCodes.Ret)
+        }) addIl.InsertBefore(addEntry, instruction);
+
+        var layout = new MethodDefinition(CardLayoutHelperName, MethodAttributes.Assembly | MethodAttributes.Static, module.TypeSystem.Void);
+        layout.Parameters.Add(new ParameterDefinition("view", ParameterAttributes.None, uiCard));
+        layout.Parameters.Add(new ParameterDefinition("card", ParameterAttributes.None, card));
+        layout.Body.InitLocals = true;
+        var display = new VariableDefinition(gearDisplay);
+        layout.Body.Variables.Add(display);
+        common.Methods.Add(layout);
+        il = layout.Body.GetILProcessor();
+        var restorePages = Instruction.Create(OpCodes.Nop);
+        var applyController = Instruction.Create(OpCodes.Ldarg_0);
+        var layoutDone = Instruction.Create(OpCodes.Ret);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, frontGraphField);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Callvirt, getGear);
+        il.Emit(OpCodes.Isinst, gearDisplay);
+        il.Emit(OpCodes.Stloc, display);
+        il.Emit(OpCodes.Ldloc, display);
+        il.Emit(OpCodes.Brfalse, layoutDone);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldfld, cardTypeField);
+        il.Emit(OpCodes.Brtrue, restorePages);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, layer);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Bne_Un, restorePages);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, pagesOverridden);
+        il.Emit(OpCodes.Brtrue, layoutDone);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, display);
+        il.Emit(OpCodes.Callvirt, pages.GetMethod);
+        il.Emit(OpCodes.Stfld, originalPages);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, pagesOverridden);
+        il.Emit(OpCodes.Ldloc, display);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, module.TypeSystem.String);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, frontStateField);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, getPageId);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, pages.SetMethod);
+        il.Emit(OpCodes.Br, applyController);
+        il.Append(restorePages);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, pagesOverridden);
+        il.Emit(OpCodes.Brfalse, layoutDone);
+        il.Emit(OpCodes.Ldloc, display);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, originalPages);
+        il.Emit(OpCodes.Callvirt, pages.SetMethod);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stfld, originalPages);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, pagesOverridden);
+        il.Append(applyController);
+        il.Emit(OpCodes.Ldfld, frontGraphField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, frontStateField);
+        il.Emit(OpCodes.Callvirt, handleController);
+        il.Append(layoutDone);
+
+        var prepare = new MethodDefinition(CardPrepareHelperName, MethodAttributes.Assembly | MethodAttributes.Static, card);
+        prepare.Parameters.Add(new ParameterDefinition("view", ParameterAttributes.None, uiCard));
+        prepare.Parameters.Add(new ParameterDefinition("card", ParameterAttributes.None, card));
+        common.Methods.Add(prepare);
+        il = prepare.Body.GetILProcessor();
+        var returnCard = Instruction.Create(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, map);
+        il.Emit(OpCodes.Starg_S, prepare.Parameters[1]);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, returnCard);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, returnCard);
+        EmitGraphPreparation(1, frontGraphField);
+        EmitGraphPreparation(2, fullGraphField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, layout);
+        il.Append(returnCard);
+        il.Emit(OpCodes.Ret);
+
+        void EmitGraphPreparation(int targetLayer, FieldDefinition graphField)
+        {
+            var noKey = Instruction.Create(OpCodes.Ldnull);
+            var keyReady = Instruction.Create(OpCodes.Nop);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldfld, isVideoField);
+            il.Emit(OpCodes.Brfalse, noKey);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, layer);
+            il.Emit(targetLayer == 1 ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Bne_Un, noKey);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldfld, keyField);
+            il.Emit(OpCodes.Br, keyReady);
+            il.Append(noKey);
+            il.Append(keyReady);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, graphField);
+            il.Emit(OpCodes.Call, prepareGraph);
+        }
+
+        var cardTypeLoads = renderer.Body.Instructions.Where(instruction => instruction.OpCode == OpCodes.Ldfld &&
+            instruction.Operand is FieldReference field && field.FullName == cardTypeField.FullName &&
+            instruction.Next?.OpCode is var next && (next == OpCodes.Ldc_I4_1 || next == OpCodes.Ldc_I4_2)).ToArray();
+        if (cardTypeLoads.Length != 2)
+            throw new InvalidOperationException("卡牌视频分支与已验证版本不同，停止导出。");
+        foreach (var instruction in cardTypeLoads)
+        {
+            instruction.OpCode = OpCodes.Call;
+            instruction.Operand = layer;
+        }
+        var rendererIl = renderer.Body.GetILProcessor();
+        var rendererEntry = renderer.Body.Instructions[0];
+        foreach (var instruction in new[]
+        {
+            Instruction.Create(OpCodes.Ldarg_0), Instruction.Create(OpCodes.Ldarg_1),
+            Instruction.Create(OpCodes.Call, prepare), Instruction.Create(OpCodes.Starg_S, renderer.Parameters[1])
+        }) rendererIl.InsertBefore(rendererEntry, instruction);
     }
 
     public static (string Runtime, string Video) FindBundles(string root, CancellationToken cancellationToken,
@@ -140,7 +476,7 @@ public static class AnimatedPortraitPatch
 
     public static Result Export(Request request)
     {
-        if (!IsCharacterPortrait(request.TextureName)) throw new ArgumentException("动态替换仅支持角色立绘");
+        if (!IsSupportedTarget(request.TextureName)) throw new ArgumentException("动态替换仅支持角色立绘、手牌和事件卡");
         string root = Path.GetFullPath(request.Root);
         string runtimeRelative = Relative(request.RuntimeBundle);
         string videoRelative = Relative(request.VideoBundle);

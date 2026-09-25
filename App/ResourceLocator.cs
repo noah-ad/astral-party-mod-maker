@@ -69,7 +69,15 @@ public static class ResourceLocator
         var relative = Path.GetRelativePath(gameRoot, resourcePath);
         if (Path.IsPathRooted(relative)
             || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-            return Path.Combine(backupDir, Path.GetFileName(resourcePath));
+        {
+            string logicalName = backupName;
+            if (string.IsNullOrWhiteSpace(logicalName))
+            {
+                string owner = Path.GetFileName(Path.GetDirectoryName(resourcePath));
+                logicalName = string.IsNullOrWhiteSpace(owner) ? Path.GetFileName(resourcePath) : owner + ".bundle";
+            }
+            return Path.Combine(backupDir, ModEngine.SafeBackupName(logicalName));
+        }
         return Path.Combine(backupDir, "__wrapped__", relative);
     }
 

@@ -23,6 +23,10 @@ public class TexRef
     public int Width;
     public int Height;
     public string Format;
+    public bool IsSkillAnimation;
+    public string OwnerHeroId;
+    public string OwnerVariant;
+    public bool OwnerIsMonster;
     public bool Modded;      // 是否已被本工具改成 RGBA32
     public string Display;   // 显示名 (角色模式用 "半身 01" 等友好标签; null 则用 Name)
     public override string ToString() => $"{Name} ({Width}x{Height})";

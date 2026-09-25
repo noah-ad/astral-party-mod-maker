@@ -11,12 +11,13 @@ public class AssetCategory
     public string Variant = "";   // 01 / 02 / Max / ""
     public bool Sfw;         // 是否 _sfw 和谐版
     public string Raw;       // 原始名
+    public bool MonsterOverride;
 
     public bool IsHero => Series == "Hero";
     public bool IsHandCard => Series == "HandCard";
 
     /// <summary>角色ID >= 1000 视为怪兽。</summary>
-    public bool IsMonster => IsHero && int.TryParse(HeroId, out var n) && n >= 1000;
+    public bool IsMonster => IsHero && (MonsterOverride || int.TryParse(HeroId, out var n) && n >= 1000);
 
     /// <summary>用于分组的稳定键 (重命名时作为 key)。怪兽合为一组。</summary>
     public string GroupKey => Series switch
@@ -36,7 +37,8 @@ public class AssetCategory
     public int KindOrder => Kind switch
     {
         "Bust" => 0, "Card" => 1, "Card2" => 2, "ThinCard" => 3,
-        "ProfilePhoto" => 4, "RolePhoto" => 5, "LevelUp" => 6, "Story" => 7, _ => 9
+        "ProfilePhoto" => 4, "RolePhoto" => 5, "LevelUp" => 6, "Story" => 7,
+        "SkillAnimation" => 8, _ => 9
     };
 
     /// <summary>卡片上显示的版本类型 (皮肤已在分组标题, 这里只显示类型)。</summary>
@@ -48,7 +50,7 @@ public class AssetCategory
             {
                 "Bust" => "半身", "Card" => "卡面", "Card2" => "卡面2", "ThinCard" => "细卡",
                 "ProfilePhoto" => "头像", "RolePhoto" => "角色照", "LevelUp" => "升级",
-                "Story" => "剧情", "HandCard" => "手牌", _ => Kind
+                "Story" => "剧情", "HandCard" => "手牌", "SkillAnimation" => "技能动画 · " + Raw, _ => Kind
             };
             return k + (Sfw ? " (和谐)" : "");
         }
@@ -93,5 +95,19 @@ public static class NameParser
         }
 
         return c;
+    }
+
+    public static AssetCategory Parse(string name, string ownerHeroId, string ownerVariant, bool skillAnimation, bool ownerIsMonster)
+    {
+        if (!skillAnimation || string.IsNullOrWhiteSpace(ownerHeroId)) return Parse(name);
+        return new AssetCategory
+        {
+            Raw = name,
+            Series = "Hero",
+            Kind = "SkillAnimation",
+            HeroId = ownerHeroId,
+            Variant = ownerVariant ?? "",
+            MonsterOverride = ownerIsMonster
+        };
     }
 }

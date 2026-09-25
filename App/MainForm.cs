@@ -44,7 +44,7 @@ public class MainForm : Form
     private string _sortedKey;
     private List<TexIndexEntry> _sortedRows;
 
-    public const string Version = "v2.3.0-preview.11";
+    public const string Version = "v2.3.0-preview.12";
     private const string PageDashboard = "dashboard";
     private const string PageBrowse = "browse";
     private const string PagePack = "pack";
@@ -490,7 +490,8 @@ public class MainForm : Form
         _resourceList.Resize += (_, _) => LayoutResourceListColumns();
         _resourceList.MouseDoubleClick += (_, _) =>
         {
-            if (_selectedAsset is { IsTexture: true }) PickAndReplaceTexture(_selectedAsset);
+            if (IsSkillAnimationCandidate(_selectedAsset)) OpenSkillAnimation(_selectedAsset);
+            else if (_selectedAsset is { IsTexture: true }) PickAndReplaceTexture(_selectedAsset);
         };
         _resourceList.MouseUp += (_, e) =>
         {
@@ -508,16 +509,17 @@ public class MainForm : Form
         menu.Items.Add("导出所在 Bundle ZIP...", null, (_, _) => { if (_selectedAsset != null) ExportBundleZip(new[] { _selectedAsset }, _selectedAsset.Name ?? "bundle"); });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("定位文件", null, (_, _) => { if (_selectedAsset != null) LocateBundle(_selectedAsset); });
-        var animationItem = menu.Items.Add("替换为视频 / GIF...", null, (_, _) => OpenAnimatedPortrait(_selectedAsset));
+        var animationItem = menu.Items.Add("替换为视频 / GIF...", null, (_, _) => OpenDynamicReplacement(_selectedAsset));
         menu.Opening += (_, e) =>
         {
             bool has = _selectedAsset != null;
             bool tex = _selectedAsset is { IsTexture: true };
-            menu.Items[0].Enabled = tex;
+            menu.Items[0].Enabled = tex && !IsSkillAnimationCandidate(_selectedAsset);
             menu.Items[1].Enabled = tex;
             menu.Items[2].Enabled = has;
             menu.Items[4].Enabled = has;
-            animationItem.Visible = IsAnimatedPortraitCandidate(_selectedAsset);
+            animationItem.Visible = IsDynamicReplacementCandidate(_selectedAsset);
+            animationItem.Text = IsSkillAnimationCandidate(_selectedAsset) ? "替换技能动画..." : "替换为视频 / GIF...";
             e.Cancel = !has;
         };
         _resourceList.ContextMenuStrip = menu;
@@ -614,7 +616,7 @@ public class MainForm : Form
         _replaceAnimationBtn.ForeColor = Theme.Cyan;
 
         _replaceTextureBtn.Click += (_, _) => { if (_selectedAsset != null) PickAndReplaceTexture(_selectedAsset); };
-        _replaceAnimationBtn.Click += (_, _) => OpenAnimatedPortrait(_selectedAsset);
+        _replaceAnimationBtn.Click += (_, _) => OpenDynamicReplacement(_selectedAsset);
         _exportPngBtn.Click += (_, _) => { if (_selectedAsset != null) ExportSingle(_selectedAsset); };
         _exportBundleZipBtn.Click += (_, _) => { if (_selectedAsset != null) ExportBundleZip(new[] { _selectedAsset }, "当前资源包"); };
         _replaceBundleBtn.Click += (_, _) => { if (_selectedAsset != null) ReplaceBundleFile(_selectedAsset); };
@@ -1143,7 +1145,7 @@ public class MainForm : Form
         ClearDetails();
         if (includeAdvancedTypes) IndexService.ClearHotBundleCache();
 
-        _index = includeAdvancedTypes
+        _index = includeAdvancedTypes || rebuild
             ? null
             : await Task.Run(() => _indexSvc.Load(_folder, heroOnly: false, includeHotCache: _includeHotCache, recursive: _recursiveFolder));
         if (_index == null)
@@ -1376,25 +1378,25 @@ public class MainForm : Form
 
     private List<CharacterGroupInfo> GetCharacterGroups()
     {
-        IEnumerable<string> names = Enumerable.Empty<string>();
+        IEnumerable<AssetCategory> assets = Enumerable.Empty<AssetCategory>();
         if (_index?.Lightweight == true)
         {
             if (_index.TextureRefsByCategory != null
                 && _index.TextureRefsByCategory.TryGetValue(ResourceCategories.CharacterId, out var refs))
-                names = refs.Select(r => r.Name);
+                assets = refs.Select(r => NameParser.Parse(r.Name, r.OwnerHeroId, r.OwnerVariant,
+                    r.IsSkillAnimation, r.OwnerIsMonster));
         }
         else if (_index != null)
         {
-            names = _index.Items
+            assets = _index.Items
                 .Where(i => i.Kind == ResourceKinds.Texture
                     && string.Equals(i.CategoryId, ResourceCategories.CharacterId, StringComparison.OrdinalIgnoreCase))
-                .Select(i => i.Name);
+                .Select(ParseAsset);
         }
 
         var map = new Dictionary<string, CharacterGroupInfo>(StringComparer.OrdinalIgnoreCase);
-        foreach (var name in names)
+        foreach (var parsed in assets)
         {
-            var parsed = NameParser.Parse(name);
             if (!parsed.IsHero) continue;
             var key = parsed.GroupKey;
             if (!map.TryGetValue(key, out var group))
@@ -1491,7 +1493,7 @@ public class MainForm : Form
             .Where(i => i.Kind == kind)
             .Where(i => categoryId == ResourceCategories.AllId || string.Equals(i.CategoryId, categoryId, StringComparison.OrdinalIgnoreCase))
             .Where(i => MatchesQuery(i.Name, i.Bundle, query))
-            .Where(i => MatchesHeroFilter(i.Name));
+            .Where(MatchesHeroFilter);
 
         var rows = SortAssetRows(filtered, kind, categoryId);
         _sortedIndex = _index;
@@ -1522,10 +1524,11 @@ public class MainForm : Form
             {
                 if (!MatchesQuery(r.Name, r.Bundle, query))
                     continue;
-                if (!MatchesHeroFilter(r.Name))
+                var entry = MakeLightweightEntry(r.Bundle, r.Name, categoryId);
+                if (!MatchesHeroFilter(entry))
                     continue;
                 if (keepAllForGrouping || total >= offset && picked.Count < cap)
-                    picked.Add(MakeLightweightEntry(r.Bundle, r.Name, categoryId));
+                    picked.Add(entry);
                 total++;
             }
 
@@ -1541,19 +1544,18 @@ public class MainForm : Form
             {
                 if (!MatchesQuery(name, bundle, query))
                     continue;
-                if (!MatchesHeroFilter(name))
-                    continue;
 
                 string catId = null;
                 if (needsCategory)
                 {
                     catId = ResourceCategories.Categorize(ResourceKinds.Texture, name);
-                    if (!string.Equals(catId, categoryId, StringComparison.OrdinalIgnoreCase))
-                        continue;
                 }
+                var entry = MakeLightweightEntry(bundle, name, catId);
+                if (needsCategory && !string.Equals(entry.CategoryId, categoryId, StringComparison.OrdinalIgnoreCase)) continue;
+                if (!MatchesHeroFilter(entry)) continue;
 
                 if (keepAllForGrouping || total >= offset && picked.Count < cap)
-                    picked.Add(MakeLightweightEntry(bundle, name, catId));
+                    picked.Add(entry);
                 total++;
             }
         }
@@ -1587,7 +1589,7 @@ public class MainForm : Form
         string source = "";
         _index.BundlePathsByName?.TryGetValue(bundleName, out bundlePath);
         _index.BundleSourcesByName?.TryGetValue(bundleName, out source);
-        return new TexIndexEntry
+        var entry = new TexIndexEntry
         {
             Bundle = bundleName,
             BundlePath = bundlePath,
@@ -1599,6 +1601,8 @@ public class MainForm : Form
             CategoryLabel = ResourceCategories.Label(ResourceKinds.Texture, categoryId),
             Format = "点选解析"
         };
+        _index.ApplyCharacterOwnership(entry);
+        return entry;
     }
 
     private static bool MatchesQuery(string name, string bundle, string query)
@@ -1606,10 +1610,18 @@ public class MainForm : Form
         || (name ?? "").Contains(query, StringComparison.OrdinalIgnoreCase)
         || (bundle ?? "").Contains(query, StringComparison.OrdinalIgnoreCase);
 
-    private bool MatchesHeroFilter(string name)
+    private static AssetCategory ParseAsset(TexIndexEntry entry)
+        => NameParser.Parse(entry?.Name, entry?.OwnerHeroId, entry?.OwnerVariant,
+            entry?.IsSkillAnimation == true, entry?.OwnerIsMonster == true);
+
+    private static AssetCategory ParseAsset(TexRef asset)
+        => NameParser.Parse(asset?.Name, asset?.OwnerHeroId, asset?.OwnerVariant,
+            asset?.IsSkillAnimation == true, asset?.OwnerIsMonster == true);
+
+    private bool MatchesHeroFilter(TexIndexEntry entry)
     {
         if (!HasHeroFilter()) return true;
-        var parsed = NameParser.Parse(name);
+        var parsed = ParseAsset(entry);
         if (!parsed.IsHero) return false;
         if (!string.IsNullOrWhiteSpace(_selectedHeroGroupKey)
             && !string.Equals(parsed.GroupKey, _selectedHeroGroupKey, StringComparison.OrdinalIgnoreCase))
@@ -1648,6 +1660,10 @@ public class MainForm : Form
             Width = e.Width,
             Height = e.Height,
             Format = e.Format,
+            IsSkillAnimation = e.IsSkillAnimation,
+            OwnerHeroId = e.OwnerHeroId,
+            OwnerVariant = e.OwnerVariant,
+            OwnerIsMonster = e.OwnerIsMonster,
             Display = DisplayName(e),
             Modded = e.Kind == ResourceKinds.Texture && PackService.Contains(_ws, e.Bundle, e.PathId, e.Name)
         };
@@ -1656,7 +1672,7 @@ public class MainForm : Form
     private string DisplayName(TexIndexEntry e)
     {
         if (e.Kind != ResourceKinds.Texture) return e.Name;
-        var parsed = NameParser.Parse(e.Name);
+        var parsed = ParseAsset(e);
         if (!parsed.IsHero) return e.Name;
         if (IsHeroSkinCategory(e.CategoryId))
             return string.IsNullOrWhiteSpace(parsed.SubLabel) ? e.Name : parsed.SubLabel;
@@ -1700,14 +1716,14 @@ public class MainForm : Form
 
     private string HeroSkinTitle(TexRef asset)
     {
-        var parsed = NameParser.Parse(asset.Name);
+        var parsed = ParseAsset(asset);
         if (!parsed.IsHero) return asset.CategoryLabel ?? "其它";
         return $"{_naming.Display(parsed.GroupKey)} / {parsed.Skin}";
     }
 
     private static int HeroGroupOrder(TexIndexEntry e)
     {
-        var parsed = NameParser.Parse(e.Name);
+        var parsed = ParseAsset(e);
         if (!parsed.IsHero) return int.MaxValue;
         if (parsed.IsMonster) return 900000;
         return int.TryParse(parsed.HeroId, out var n) ? n : int.MaxValue - 1;
@@ -1715,13 +1731,13 @@ public class MainForm : Form
 
     private static int HeroSkinOrder(TexIndexEntry e)
     {
-        var parsed = NameParser.Parse(e.Name);
+        var parsed = ParseAsset(e);
         return parsed.IsHero ? parsed.SkinOrder : 999;
     }
 
     private static int HeroKindOrder(TexIndexEntry e)
     {
-        var parsed = NameParser.Parse(e.Name);
+        var parsed = ParseAsset(e);
         return parsed.IsHero ? parsed.KindOrder : 999;
     }
 
@@ -1971,7 +1987,7 @@ public class MainForm : Form
     private string ResourceListGroupLabel(TexRef asset)
     {
         if (asset.Kind != ResourceKinds.Texture) return asset.CategoryLabel ?? ResourceKinds.Label(asset.Kind);
-        var parsed = NameParser.Parse(asset.Name);
+        var parsed = ParseAsset(asset);
         if (parsed.IsHero)
             return $"{_naming.Display(parsed.GroupKey)} / {parsed.Skin}";
         if (parsed.IsHandCard)
@@ -2317,7 +2333,9 @@ public class MainForm : Form
             $"格式: {asset.Format ?? "-"}\n" +
             $"来源: {asset.Source ?? "-"}";
         _detailPath.Text = $"Bundle: {asset.BundleName}\nPathId: {asset.PathId}\n位置: {path}";
-        _detailHint.Text = asset.IsTexture
+        _detailHint.Text = asset.IsSkillAnimation
+            ? "技能动画支持拖入视频 / GIF；会按原生帧数和 Sprite 网格重组，只修改当前资源包。"
+            : asset.IsTexture
             ? "贴图支持资产级替换、裁切、导出 PNG。"
             : "非贴图当前支持索引、定位、替换整个资源包；资产级音频/动画写回仍需单独编码器。";
     }
@@ -2377,6 +2395,12 @@ public class MainForm : Form
             string state = null;
             try
             {
+                if (asset.IsSkillAnimation)
+                {
+                    var info = SkillAnimationEngine.Inspect(asset.BundlePath, asset.PathId, asset.Name);
+                    return (Bytes: SkillAnimationEngine.DecodeFramePreview(asset.BundlePath, asset.PathId, 0),
+                        State: $"技能动画 · {info.FrameNames.Count} 帧 · 预览第 1 帧", Animated: false);
+                }
                 var receipt = PortraitReplacement.ReadReceipt(root, asset.Name);
                 if (receipt?.Texture == asset.Name)
                 {
@@ -2420,8 +2444,10 @@ public class MainForm : Form
 
     private void SetDetailButtons(bool hasAsset, bool isTexture)
     {
-        _replaceTextureBtn.Enabled = hasAsset && isTexture;
-        _replaceAnimationBtn.Enabled = hasAsset && isTexture && IsAnimatedPortraitCandidate(_selectedAsset);
+        bool skill = IsSkillAnimationCandidate(_selectedAsset);
+        _replaceTextureBtn.Enabled = hasAsset && isTexture && !skill;
+        _replaceAnimationBtn.Enabled = hasAsset && isTexture && IsDynamicReplacementCandidate(_selectedAsset);
+        _replaceAnimationBtn.Text = skill ? "替换技能动画" : "替换为视频 / GIF";
         _exportPngBtn.Enabled = hasAsset && isTexture;
         _exportBundleZipBtn.Enabled = hasAsset;
         _replaceBundleBtn.Enabled = hasAsset;
@@ -2459,8 +2485,13 @@ public class MainForm : Form
         var asset = explicitAsset ?? (TexRef)card.Tag;
         if (AnimatedPortraitDialog.IsVideo(imagePath))
         {
-            if (!IsAnimatedPortraitCandidate(asset)) { _status.Text = "视频替换当前只支持角色立绘。"; return; }
-            OpenAnimatedPortrait(asset, imagePath);
+            if (!IsDynamicReplacementCandidate(asset)) { _status.Text = "视频替换支持角色立绘、手牌、事件卡和技能动画。"; return; }
+            OpenDynamicReplacement(asset, imagePath);
+            return;
+        }
+        if (IsSkillAnimationCandidate(asset))
+        {
+            _status.Text = "技能动画请拖入视频或 GIF。";
             return;
         }
         if (!asset.IsTexture)
@@ -2637,7 +2668,18 @@ public class MainForm : Form
     }
 
     private static bool IsAnimatedPortraitCandidate(TexRef asset) =>
-        asset is { IsTexture: true } && AnimatedPortraitPatch.IsCharacterPortrait(asset.Name);
+        asset is { IsTexture: true } && AnimatedPortraitPatch.IsSupportedTarget(asset.Name);
+
+    private static bool IsSkillAnimationCandidate(TexRef asset) => SkillAnimationEngine.IsCandidate(asset);
+
+    private static bool IsDynamicReplacementCandidate(TexRef asset)
+        => IsAnimatedPortraitCandidate(asset) || IsSkillAnimationCandidate(asset);
+
+    private void OpenDynamicReplacement(TexRef asset, string videoFile = null)
+    {
+        if (IsSkillAnimationCandidate(asset)) OpenSkillAnimation(asset, videoFile);
+        else OpenAnimatedPortrait(asset, videoFile);
+    }
 
     private void OpenAnimatedPortrait(TexRef asset, string videoFile = null)
     {
@@ -2651,6 +2693,54 @@ public class MainForm : Form
         {
             UpdateDetailText(asset);
             LoadPreviewAsync(asset, null);
+        }
+    }
+
+    private async void OpenSkillAnimation(TexRef asset, string videoFile = null)
+    {
+        if (!IsSkillAnimationCandidate(asset) || !EnsureTextureReady(asset)) return;
+        try
+        {
+            _status.Text = "正在读取技能动画帧结构...";
+            var info = await Task.Run(() => SkillAnimationEngine.Inspect(asset.BundlePath, asset.PathId, asset.Name));
+            if (IsDisposed) return;
+            using var dialog = new SkillAnimationDialog(asset, info, _backupDir, videoFile);
+            dialog.ShowDialog(this);
+            _status.Text = dialog.ResultMessage.Replace('\n', ' ');
+            if (dialog.Replaced)
+            {
+                PackService.Upsert(_ws, new ModEntry
+                {
+                    Bundle = asset.BundleName,
+                    PathId = asset.PathId,
+                    TextureName = asset.Name,
+                    Width = asset.Width,
+                    Height = asset.Height,
+                    Label = "技能动画"
+                });
+                asset.Modded = true;
+            }
+            else if (dialog.Restored)
+            {
+                _ws.Entries.RemoveAll(entry =>
+                    string.Equals(entry.Bundle, asset.BundleName, StringComparison.OrdinalIgnoreCase));
+                asset.Modded = false;
+            }
+            if (dialog.Replaced || dialog.Restored)
+            {
+                PackService.SaveWorkspace(_folder, _ws);
+                UpdateDashboard();
+                if (_selectedAsset == asset)
+                {
+                    UpdateDetailText(asset);
+                    LoadPreviewAsync(asset, null);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _status.Text = "技能动画读取失败：" + ex.Message;
+            MessageBox.Show(_status.Text, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 

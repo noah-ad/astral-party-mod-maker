@@ -10,7 +10,7 @@ Set-StrictMode -Version Latest
 $repo = Split-Path -Parent $PSScriptRoot
 $package = (Resolve-Path -LiteralPath $PackageDirectory).Path
 $manifest = Get-Content -LiteralPath (Join-Path $package 'data/package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($manifest.Edition -notin @('full', 'core')) { throw 'Package edition is missing or invalid.' }
+if ($manifest.Edition -notin @('full', 'standard')) { throw 'Package edition is missing or invalid.' }
 $includeVideo = if ($manifest.Edition -eq 'full') { 'true' } else { 'false' }
 $properties = (& dotnet msbuild (Join-Path $repo 'App/JixModMaker.csproj') "-p:IncludeVideoRuntime=$includeVideo" `
     '-getProperty:Version,PortableLauncherName,PackageEditionLabel' | Out-String | ConvertFrom-Json).Properties

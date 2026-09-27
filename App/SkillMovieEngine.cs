@@ -80,9 +80,8 @@ public static class SkillMovieEngine
             string source = Path.Combine(work, "native.usm");
             await File.WriteAllBytesAsync(source, movie.Bytes, token);
             string metadata = Path.Combine(work, "native.json");
-            string tools = Path.Combine(AppContext.BaseDirectory, "Tools", "video");
-            await PortraitVideoConverter.RunAsync(Path.Combine(tools, "python", "python.exe"),
-                new[] { Path.Combine(tools, "inspect_movie.py"), source, metadata }, token);
+            await PortraitVideoConverter.RunAsync(VideoRuntime.PythonPath,
+                new[] { Path.Combine(VideoRuntime.ScriptRoot, "inspect_movie.py"), source, metadata }, token);
             var timing = JsonSerializer.Deserialize<NativeMovieTiming>(await File.ReadAllTextAsync(metadata, token))
                 ?? throw new InvalidDataException("无法读取原生技能视频元数据。");
             timing.Validate();

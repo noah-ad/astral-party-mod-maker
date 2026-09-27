@@ -5,6 +5,21 @@ static void Check(bool condition, string name)
     if (!condition) throw new Exception(name);
     Console.WriteLine("PASS " + name);
 }
+if (args.Length == 3 && args[0] == "--video-setup-smoke")
+{
+    VideoSetupChecks.SmokeAsync(args[1], args[2], Check).GetAwaiter().GetResult();
+    return;
+}
+if (args.Length == 2 && args[0] == "--video-setup-ui")
+{
+    VideoSetupChecks.Ui(args[1], Check);
+    return;
+}
+if (args.Length == 3 && args[0] == "--video-setup-ui-flow")
+{
+    VideoSetupChecks.FirstVideoUi(args[1], args[2], Check);
+    return;
+}
 if (args.Length == 4 && args[0] == "--decode-texture")
 {
     File.WriteAllBytes(args[3], new ModEngine().DecodePng(args[1], long.Parse(args[2])));
@@ -368,6 +383,7 @@ if (args.Length == 3 && args[0] == "--reject-type-layout")
     return;
 }
 VideoRuntimeChecks.Run(Check);
+VideoSetupChecks.Run(Check);
 var patchedAssembly = AnimatedPortraitPatch.PatchAssembly(originalAssembly, "UT_Hero_Card_101", AnimatedPortraitPatch.VideoSlot);
 Check(patchedAssembly.SequenceEqual(AnimatedPortraitPatch.PatchAssembly(patchedAssembly, "UT_Hero_Card_101", AnimatedPortraitPatch.VideoSlot)),
     "repeating the same native-slot mapping does not stack patches");

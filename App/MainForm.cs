@@ -864,6 +864,14 @@ public class MainForm : Form
             MakeButton("迁移旧Mod", (_, _) => MigrateOldMods()),
             MakeButton("全部还原", (_, _) => RestoreAll()));
 
+        AddPageCard("视频转换组件", VideoRuntime.IsReady ? "已就绪 · 视频 / GIF 转换可离线使用" : "尚未启用 · FFmpeg / Python / CriCodecs",
+            MakeButton(VideoRuntime.IsReady ? "检查 / 修复组件" : "启用视频组件", (_, _) =>
+            {
+                using var setup = new VideoRuntimeDialog();
+                setup.ShowDialog(this);
+                if (!IsDisposed && _activePage == PageTools) ShowToolsPage();
+            }));
+
         var dynamicReceipt = string.IsNullOrWhiteSpace(_folder) ? null : PortraitReplacement.ReadReceipt(AnimatedPortraitRoot());
         var restoreDynamic = MakeButton("还原动态替换", async (_, _) => await RestoreDynamicAsync());
         restoreDynamic.Enabled = dynamicReceipt != null && !_restoring;
@@ -2728,6 +2736,12 @@ public class MainForm : Form
     private async void LoadSkillMoviePreview(TexRef asset)
     {
         _moviePreview?.Cancel();
+        if (!VideoRuntime.IsReady)
+        {
+            _detailHint.Text = "视频组件尚未启用";
+            _status.Text = "点击动态替换，或到“工具 / 维护”启用视频组件。";
+            return;
+        }
         using var operation = new CancellationTokenSource();
         _moviePreview = operation;
         int seq = ++_previewSeq;
@@ -2831,6 +2845,7 @@ public class MainForm : Form
         _openingSkillMovie = true;
         try
         {
+            if (!VideoRuntimeDialog.EnsureReady(this)) return;
             _status.Text = "正在读取技能特写的原生尺寸与时长...";
             var info = await Task.Run(() => SkillMovieEngine.InspectAsync(asset.BundlePath, asset.Name, CancellationToken.None));
             if (IsDisposed) return;

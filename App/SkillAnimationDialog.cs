@@ -203,6 +203,7 @@ public sealed class SkillAnimationDialog : Form
     {
         if (_operation != null) return;
         if (!IsSource(input) || !File.Exists(input)) { SetStatus("请选择视频或 GIF 文件。"); return; }
+        if (!VideoRuntimeDialog.EnsureReady(this)) { SetStatus("视频组件尚未启用 · 未写入"); return; }
         _input = input;
         _sourceDuration = null;
         UpdateTimingNotice();

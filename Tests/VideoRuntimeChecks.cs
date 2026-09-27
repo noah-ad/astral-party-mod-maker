@@ -6,10 +6,12 @@ internal static class VideoRuntimeChecks
     {
         string root = Path.Combine(Path.GetTempPath(), "JixMissingRuntime-" + Guid.NewGuid().ToString("N"));
         object previousBase = AppContext.GetData("APP_CONTEXT_BASE_DIRECTORY");
+        object previousCache = AppContext.GetData("JixModMaker.VideoRuntimeCache");
         Directory.CreateDirectory(root);
         try
         {
             AppContext.SetData("APP_CONTEXT_BASE_DIRECTORY", root + Path.DirectorySeparatorChar);
+            AppContext.SetData("JixModMaker.VideoRuntimeCache", Path.Combine(root, "cache"));
             string source = Path.Combine(root, "input.mp4");
             File.WriteAllBytes(source, new byte[] { 1 });
             string work = Path.Combine(root, "output");
@@ -54,6 +56,7 @@ internal static class VideoRuntimeChecks
         finally
         {
             AppContext.SetData("APP_CONTEXT_BASE_DIRECTORY", previousBase);
+            AppContext.SetData("JixModMaker.VideoRuntimeCache", previousCache);
             Directory.Delete(root, true);
         }
     }

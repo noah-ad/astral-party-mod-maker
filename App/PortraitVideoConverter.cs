@@ -11,7 +11,7 @@ public sealed class PortraitVideoSettings
     private static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JixModMaker", "video-tools.json");
     public static PortraitVideoSettings Load()
     {
-        string bundled = Path.Combine(AppContext.BaseDirectory, "Tools", "video", "ffmpeg.exe");
+        string bundled = VideoRuntime.FfmpegPath;
         if (File.Exists(bundled)) return new() { Ffmpeg = bundled };
         try { return JsonSerializer.Deserialize<PortraitVideoSettings>(File.ReadAllText(FilePath)) ?? new(); }
         catch { return new(); }
@@ -25,9 +25,8 @@ public sealed class PortraitVideoSettings
 
 public static class PortraitVideoConverter
 {
-    private static string ToolRoot => Path.Combine(AppContext.BaseDirectory, "Tools", "video");
-    private static string PythonPath => Path.Combine(ToolRoot, "python", "python.exe");
-    private static string MuxPath => Path.Combine(ToolRoot, "mux.py");
+    private static string PythonPath => VideoRuntime.PythonPath;
+    private static string MuxPath => Path.Combine(VideoRuntime.ScriptRoot, "mux.py");
 
     public static async Task EnsureConversionAvailableAsync(PortraitVideoSettings tools, CancellationToken token)
     {
@@ -36,17 +35,18 @@ public static class PortraitVideoConverter
         if (!Available(tools.Ffmpeg)) missing.Add("FFmpeg");
         if (!File.Exists(PythonPath)) missing.Add("Python");
         if (!File.Exists(MuxPath)) missing.Add("USM 封装脚本");
-        string codecs = Path.Combine(ToolRoot, "python", "cricodecs");
+        if (!File.Exists(Path.Combine(VideoRuntime.ScriptRoot, "inspect_movie.py"))) missing.Add("视频检查脚本");
+        string codecs = Path.Combine(VideoRuntime.Root, "python", "cricodecs");
         if (!Directory.Exists(codecs) || !Directory.EnumerateFiles(codecs, "__init__*.pyd").Any()) missing.Add("CriCodecs");
         if (missing.Count > 0)
-            throw new FileNotFoundException("视频转换组件缺失（" + string.Join("、", missing) + "）。请打开标有“完整视频版”的程序，并保留同目录的 data 文件夹。");
+            throw new FileNotFoundException("视频转换组件缺失（" + string.Join("、", missing) + "）。请在“工具 / 维护”中启用视频组件，或拖入视频后点击“下载并启用”。");
         try
         {
             await RunAsync(PythonPath, new[] { "-I", "-c", "from cricodecs import usm, video" }, token);
         }
         catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception)
         {
-            throw new IOException("视频转换组件无法启动，请重新解压完整视频版。" + ex.Message, ex);
+            throw new IOException("视频转换组件无法启动，请在“工具 / 维护”中检查或修复视频组件。" + ex.Message, ex);
         }
     }
 
@@ -139,7 +139,7 @@ public static class PortraitVideoConverter
     private static async Task<string> RunCapturedAsync(string executable, IEnumerable<string> arguments, CancellationToken token, bool keepHeader = false)
     {
         token.ThrowIfCancellationRequested();
-        if (!Available(executable)) throw new FileNotFoundException("转换组件缺失，请重新解压完整版本：" + executable);
+        if (!Available(executable)) throw new FileNotFoundException("转换组件缺失，请在“工具 / 维护”中启用视频组件：" + executable);
         var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true, RedirectStandardOutput = true };
         foreach (string argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new IOException("无法启动转换工具");

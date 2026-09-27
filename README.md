@@ -9,31 +9,32 @@
 
 ## 下载
 
-稳定发行版：**v2.2.1**。最新预发行源码及公开核心包：**v2.3.0-preview.16**。本地完整视频版也为 **v2.3.0-preview.16**。
+最新发行版：**v2.3.0**。公开标准版支持视频 / GIF 转换，首次使用一键下载组件，不再提供缺少启用入口的核心包。
 
-- [下载 v2.2.1 Win64 免安装包](https://github.com/noah-ad/astral-party-mod-maker/releases/download/v2.2.1/AstralPartyModMaker-v2.2.1-win64.zip)
-- [下载 v2.3.0-preview.16 Win64 核心预览包](https://github.com/noah-ad/astral-party-mod-maker/releases/download/v2.3.0-preview.16/AstralPartyModMaker-v2.3.0-preview.16-win64-core.zip)
-- [查看 preview.16 更新说明](docs/releases/v2.3.0-preview.16.md)
+- [下载 v2.3.0 Win64 标准版](https://github.com/noah-ad/astral-party-mod-maker/releases/download/v2.3.0/AstralPartyModMaker-v2.3.0-win64.zip)
+- [查看 v2.3.0 更新说明](docs/releases/v2.3.0.md)
 - [查看全部版本与更新说明](https://github.com/noah-ad/astral-party-mod-maker/releases)
 
-preview.16 的公开附件是 EXE + data 核心包，包含静态 Mod 制作、索引、分类、导出和还原功能；源码已包含独立动态立绘 / 手牌 / 事件、原生技能特写替换实现。但附件**不含 FFmpeg / Python / CriCodecs，不能转换视频，也不能生成需要这些组件的动态预览**。动态还原不依赖转换组件。完整视频运行时只保留本地构建，待第三方再分发条件确认后再公开。
+**首次拖入视频 / GIF 时点击“下载并启用”即可使用动态功能**，也可在“工具 / 维护 → 启用视频组件”提前准备。程序从 FFmpeg 构建发布者、Python 官网及 PyPI 下载固定版本组件（合计约 117 MB），校验 SHA256 后自动安装到当前用户目录。不需要手动装 Python、运行命令或配置路径，之后在同一台电脑同一用户下可离线转换。
+
+首次启用需要能访问组件原站；网络中断可以重试，已完整下载并校验的组件会复用。公开 ZIP 不是预装全部组件的离线包。取消下载、安装失败或只浏览静态资源都不会改动游戏文件。独立动态立绘 / 手牌 / 事件仍属于实验功能，游戏内启动和 Android 兼容性限制见下文。
 
 下载 ZIP 后完整解压，双击顶层的 `吉星Mod制作器*.exe`。发行包已包含 .NET 8 运行环境，无需另外安装 SDK 或 Desktop Runtime。
 
 ### 新版启动方式
 
-preview.13 起，文件夹、ZIP、启动 EXE 和窗口标题统一标出版本号与“完整视频版 / 核心版”。版本号每次更新递增；完整视频版包含转换组件，核心版不含视频转换组件。便携包顶层仍只有两项：
+文件夹、ZIP、启动 EXE 和窗口标题统一标出版本号。便携包顶层只有两项：
 
 ```text
-吉星Mod制作器-v2.3.0-preview.16-核心版.exe
+吉星Mod制作器-v2.3.0-标准版.exe
 data/
 ```
 
-**制作动态 Mod 请打开“完整视频版”EXE。** 不需要打开 `data`、寻找 DLL 或运行 BAT，也不需要另装 .NET。图标、程序、运行库及完整视频版的转换组件统一收进 `data`，启动 EXE 与该文件夹必须放在一起。可以把整个文件夹移到其它位置，也可以给 EXE 创建桌面快捷方式；不要只移动 EXE，也不要直接在压缩包内运行。
+双击顶层 EXE 即可。不需要打开 `data`、寻找 DLL 或运行 BAT，也不需要另装 .NET。启动 EXE 与 `data` 必须放在一起。可以把整个文件夹移到其它位置，也可以给 EXE 创建桌面快捷方式；不要只移动 EXE，也不要直接在压缩包内运行。
 
-preview.13 会在导入视频时检查 FFmpeg、Python、CriCodecs 和封装脚本，缺少组件会立即提示，不再等到裁剪、预览完成后才在替换时失败。版本号由项目构建信息统一生成，`data/package.json` 记录该包的版本、类型、启动文件及构建时间。
+版本号由项目构建信息统一生成，`data/package.json` 记录版本、类型、启动文件、组件启用方式及构建时间。转换组件位于 `%LOCALAPPDATA%\JixModMaker\video-runtime`，可供本机后续版本复用。“工具 / 维护”提供检查 / 修复入口。
 
-该布局只改变工具的发布目录，不改变游戏 Mod 的直接覆盖 ZIP。GitHub 源码包含新布局与动态立绘实现；由于视频转换依赖的再分发条件尚待确认，完整转换运行时仍只用于本地构建，暂未上传新的完整实验版安装包。
+该布局只改变工具的发布目录，不改变游戏 Mod 的直接覆盖 ZIP。组件从原站下载，不随仓库重新分发；版本、来源、校验值和许可证说明见 [转换组件说明](App/Tools/video/DEPENDENCIES.md)。
 
 ## 功能
 
@@ -52,7 +53,9 @@ preview.13 会在导入视频时检查 FFmpeg、Python、CriCodecs 和封装脚�
 - **备份与还原**：替换前自动保存原始 Bundle，可一键还原全部修改，并支持旧 Mod 迁移。
 - **吉星风格界面**：采用应用图标的明快主色和圆角视觉，针对 Windows 150% DPI 及不缩放显示进行了布局适配。
 
-## 动态资源实验版（v2.3.0-preview.16 源码 / 本地完整视频版）
+## 动态资源（v2.3.0 标准版可启用）
+
+v2.3.0 解决公开包缺少视频组件的交付问题，不改变 preview.16 的游戏补丁方案，也不把实验性独立动态方案宣称为已完成游戏内验证。
 
 preview.14 保留角色立绘、手牌和事件卡功能，将技能大立绘 / 特写演出改为直接替换原生视频。不会将 Q 版动作当成技能特写，也不会为替换原生技能视频修改热更新 DLL。
 
@@ -91,7 +94,7 @@ preview.15 增加资源详情“还原当前资源包 / 还原动态替换”按
 
 旧借槽方案的 PC / Android 资源副本曾通过封包与恢复测试；这不代表新的独立文件方案已在 Android 验证。preview.16 通过 369 项回归、真实 Windows 程序集检查，以及立绘 / 手牌 / 事件多目标安装、重复替换和逐字节还原的副本测试；隔离进程中的原生 CRI 库直接读取独立 USM 后到达 `Ready`。preview.14 在真实 `VSkill_Hero101` 副本上验证了 1504×1080、30 FPS、40 帧非循环视频替换、深绿幕去除、不变形、仅单包导出与逐字节恢复；旧 `Talent-001` 图集测试作为 Q 版动作回归保留。100% / 模拟 150% 界面检查也已通过。所有写入测试均在隔离副本执行，**仍未完成所有目标的真实游戏内播放和移动端性能验证**；本地预览不能代替实机验证。
 
-稳定版 v2.2.1 不包含动态立绘功能。视频转换依赖未纳入 Git；CriCodecs 的再分发条件仍待确认，因此公开源码不能单独提供完整转换运行时。
+旧 v2.2.1 不包含动态立绘功能，preview.16 核心包没有组件启用入口。请下载 v2.3.0 标准版，通过内置的一键下载启用视频转换。
 
 详细结构与验证记录见 [动态立绘调查](Research/AnimationProbe/README.md)。
 
@@ -116,14 +119,14 @@ dotnet run -c Release
 在仓库根目录使用 Windows PowerShell 5.1 或更新版本：
 
 ```powershell
-# 需要本地已经配齐视频转换组件；生成目录和 ZIP
+# 公开标准版，内置组件下载入口；生成目录和 ZIP
 ./scripts/Publish-Portable.ps1 -Zip
 
-# 仅供开发检查：不包含视频转换器，不作为完整功能包分发
-./scripts/Publish-Portable.ps1 -WithoutVideoRuntime -OutputDirectory ./artifacts/developer-check
+# 仅用于本地：预先配齐组件，打包离线完整视频版
+./scripts/Publish-Portable.ps1 -WithVideoRuntime -OutputDirectory ./artifacts/local-full
 ```
 
-完整视频版默认产物在 `artifacts/吉星Mod制作器-v2.3.0-preview.16-win64-完整视频版/`，核心版目录后缀为 `核心版`，同名 ZIP 位于旁边。脚本拒绝覆盖已有目录或 ZIP。对外交付有变化的程序必须先递增项目版本号；`-OutputDirectory` 仅用于隔离验证，不用于把不同程序复用同一个发行版本号。启动文件使用 SDK 的原生 apphost，以相对路径加载 `data/JixModMaker.dll`，运行时也随包存放，不需要额外启动器运行库或管理员权限。普通 `dotnet build` 的开发输出维持原样。
+标准版默认产物在 `artifacts/吉星Mod制作器-v2.3.0-win64-标准版/`，同名 ZIP 位于旁边。脚本拒绝覆盖已有目录或 ZIP。对外交付有变化的程序必须先递增项目版本号；`-OutputDirectory` 仅用于隔离验证，不用于把不同程序复用同一个发行版本号。启动文件使用 SDK 的原生 apphost，以相对路径加载 `data/JixModMaker.dll`，运行时也随包存放，不需要额外启动器运行库或管理员权限。普通 `dotnet build` 的开发输出维持原样。
 
 可运行 `./Tests/PortablePackage.ps1 -PackageDirectory <发布目录>` 检查根目录结构、图标与版本、中文空格路径、移动后的启动和随包运行库。测试只打开空资源目录，不修改游戏文件。
 

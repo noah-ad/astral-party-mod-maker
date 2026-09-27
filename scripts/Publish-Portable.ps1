@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [string]$OutputDirectory,
+    [switch]$WithVideoRuntime,
     [switch]$WithoutVideoRuntime,
     [switch]$Zip
 )
@@ -13,7 +14,8 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
 }
 $repo = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repo 'App/JixModMaker.csproj'
-$includeVideo = if ($WithoutVideoRuntime) { 'false' } else { 'true' }
+if ($WithVideoRuntime -and $WithoutVideoRuntime) { throw 'Choose one runtime packaging mode.' }
+$includeVideo = if ($WithVideoRuntime) { 'true' } else { 'false' }
 $properties = (& dotnet msbuild $project "-p:IncludeVideoRuntime=$includeVideo" `
     '-getProperty:Version,PortableLauncherName,PackageEdition,PackageEditionLabel' | Out-String | ConvertFrom-Json).Properties
 if ($LASTEXITCODE -ne 0) { throw 'Cannot read package version and edition.' }
@@ -31,11 +33,11 @@ if (Test-Path -LiteralPath $output) {
 if ($Zip -and (Test-Path -LiteralPath $archive)) {
     throw "Archive already exists: $archive"
 }
-if (!$WithoutVideoRuntime) {
+if ($WithVideoRuntime) {
     foreach ($relative in @('ffmpeg.exe', 'python/python.exe', 'mux.py', 'inspect_movie.py')) {
         $file = Join-Path $repo "App/Tools/video/$relative"
         if (!(Test-Path -LiteralPath $file -PathType Leaf)) {
-            throw "Missing local video component: $file. See App/Tools/video/DEPENDENCIES.md, or use -WithoutVideoRuntime for a developer package."
+            throw "Missing local video component: $file. See App/Tools/video/DEPENDENCIES.md, or omit -WithVideoRuntime for the public standard package."
         }
     }
     & (Join-Path $repo 'App/Tools/video/python/python.exe') -c 'from cricodecs import usm, video'
@@ -52,18 +54,20 @@ if ($entries.Count -ne 2 -or !(Test-Path -LiteralPath (Join-Path $output $launch
     throw 'Invalid portable layout: expected only the launcher and data directory.'
 }
 foreach ($relative in @('JixModMaker.dll', 'JixModMaker.deps.json', 'JixModMaker.runtimeconfig.json',
-    'hostfxr.dll', 'hostpolicy.dll', 'coreclr.dll', 'classdata.tpk', 'Assets/app_icon.ico')) {
+    'hostfxr.dll', 'hostpolicy.dll', 'coreclr.dll', 'classdata.tpk', 'Assets/app_icon.ico',
+    'Tools/video/mux.py', 'Tools/video/inspect_movie.py', 'Tools/video/DEPENDENCIES.md')) {
     if (!(Test-Path -LiteralPath (Join-Path $data $relative) -PathType Leaf)) { throw "Missing packaged file: $relative" }
 }
-if ($WithoutVideoRuntime -and ((Test-Path -LiteralPath (Join-Path $data 'Tools/video/ffmpeg.exe')) -or
+if (!$WithVideoRuntime -and ((Test-Path -LiteralPath (Join-Path $data 'Tools/video/ffmpeg.exe')) -or
     (Test-Path -LiteralPath (Join-Path $data 'Tools/video/python')))) {
-    throw 'Excluded video binaries leaked into the developer package.'
+    throw 'Excluded video binaries leaked into the standard package.'
 }
 [ordered]@{
     Version = $version
     Edition = $properties.PackageEdition
     EditionLabel = $properties.PackageEditionLabel
     Launcher = $launcher
+    VideoSetup = if ($WithVideoRuntime) { 'bundled' } else { 'upstream-download-sha256' }
     BuiltAtUtc = [DateTime]::UtcNow.ToString('o')
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $data 'package.json') -Encoding UTF8
 if ($Zip) {

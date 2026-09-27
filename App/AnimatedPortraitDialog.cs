@@ -199,6 +199,7 @@ public sealed class AnimatedPortraitDialog : Form
     {
         if (_operation != null) return;
         if (!IsVideo(input) || !File.Exists(input)) { SetStatus("请选择一个视频或 GIF 文件。"); return; }
+        if (!VideoRuntimeDialog.EnsureReady(this)) { SetStatus("视频组件尚未启用 · 未写入本次视频"); return; }
         _lastInput = input;
         _previewReady = false;
         _operation = new CancellationTokenSource();

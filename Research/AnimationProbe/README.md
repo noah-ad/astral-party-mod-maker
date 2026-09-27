@@ -31,7 +31,7 @@ CRIWARE 对 `CriManaUsmAsset` 的说明：
 
 preview.14 起，技能大立绘直接替换 `VSkill_Hero...` / `VSkill_Monster...` 自身的 USM，保持原尺寸、帧率、帧数与非循环设置，不修改 DLL。`Talent*` 图集仅属于 Q 版动作，不能当成技能特写。
 
-发行范围和限制见 [preview.16 更新说明](../../docs/releases/v2.3.0-preview.16.md)。
+v2.3.0 保持该补丁实现，公开标准版新增一键从原站下载转换组件的入口。发行范围和限制见 [v2.3.0 更新说明](../../docs/releases/v2.3.0.md)。
 
 ## 历史实现（preview.12）
 

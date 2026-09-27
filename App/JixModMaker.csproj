@@ -7,17 +7,17 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <AssemblyName>JixModMaker</AssemblyName>
-    <Version>2.3.0-preview.16</Version>
+    <Version>2.3.0</Version>
     <AssemblyVersion>2.3.0.0</AssemblyVersion>
-    <FileVersion>2.3.0.16</FileVersion>
+    <FileVersion>2.3.0.17</FileVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>
-    <IncludeVideoRuntime Condition="'$(IncludeVideoRuntime)' == ''">true</IncludeVideoRuntime>
+    <IncludeVideoRuntime Condition="'$(IncludeVideoRuntime)' == ''">false</IncludeVideoRuntime>
     <PackageEdition Condition="'$(IncludeVideoRuntime)' == 'true'">full</PackageEdition>
-    <PackageEdition Condition="'$(IncludeVideoRuntime)' != 'true'">core</PackageEdition>
+    <PackageEdition Condition="'$(IncludeVideoRuntime)' != 'true'">standard</PackageEdition>
     <PackageEditionLabel Condition="'$(PackageEdition)' == 'full'">完整视频版</PackageEditionLabel>
-    <PackageEditionLabel Condition="'$(PackageEdition)' == 'core'">核心版</PackageEditionLabel>
+    <PackageEditionLabel Condition="'$(PackageEdition)' == 'standard'">标准版</PackageEditionLabel>
     <PortableLauncherName>吉星Mod制作器-v$(Version)-$(PackageEditionLabel)</PortableLauncherName>
     <!-- 第三方库放在仓库根的 libs/ 下 (见 libs/README.txt 说明来源与协议) -->
     <LibsDir>$(MSBuildProjectDirectory)/../libs</LibsDir>
@@ -25,8 +25,8 @@
 
   <ItemGroup>
     <AssemblyMetadata Include="PackageEdition" Value="$(PackageEdition)" />
-    <Content Include="Tools/video/mux.py;Tools/video/DEPENDENCIES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
-    <Content Include="Tools/video/**/*" Exclude="Tools/video/mux.py;Tools/video/DEPENDENCIES.md"
+    <Content Include="Tools/video/mux.py;Tools/video/inspect_movie.py;Tools/video/DEPENDENCIES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Tools/video/**/*" Exclude="Tools/video/mux.py;Tools/video/inspect_movie.py;Tools/video/DEPENDENCIES.md"
              Condition="'$(IncludeVideoRuntime)' == 'true'" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(LibsDir)/Mono.Cecil.LICENSE.txt" Link="Mono.Cecil.LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="$(LibsDir)/classdata.tpk" Link="classdata.tpk" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

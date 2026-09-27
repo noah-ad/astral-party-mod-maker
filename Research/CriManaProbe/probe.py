@@ -25,7 +25,11 @@ if "--prepare" in sys.argv:
     function("CRIWARE88224C7A", [])()
     player = function("CRIWAREBF4BD114", [c.c_int, c.c_uint], c.c_int)(0, 1024)
     print("player", player, flush=True)
-    function("CRIWAREC0FD80C9", [c.c_int, c.c_void_p, c.c_int64])(player, movie, len(movie) - 1)
+    if "--file" in sys.argv:
+        path = str(pathlib.Path(sys.argv[2]).resolve()).encode("utf-8")
+        function("CRIWAREA64247AA", [c.c_int, c.c_void_p, c.c_char_p])(player, None, path)
+    else:
+        function("CRIWAREC0FD80C9", [c.c_int, c.c_void_p, c.c_int64])(player, movie, len(movie) - 1)
     function("CRIWAREF810727B", [c.c_int])(player)
     update = function("CRIWARE05D05235", [c.c_int], c.c_int)
     last = None

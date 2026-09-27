@@ -8,13 +8,20 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repo = Split-Path -Parent $PSScriptRoot
-[xml]$project = Get-Content -LiteralPath (Join-Path $repo 'App/JixModMaker.csproj') -Raw -Encoding UTF8
-$launcher = $project.SelectSingleNode('//PortableLauncherName').InnerText + '.exe'
 $package = (Resolve-Path -LiteralPath $PackageDirectory).Path
+$manifest = Get-Content -LiteralPath (Join-Path $package 'data/package.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($manifest.Edition -notin @('full', 'core')) { throw 'Package edition is missing or invalid.' }
+$includeVideo = if ($manifest.Edition -eq 'full') { 'true' } else { 'false' }
+$properties = (& dotnet msbuild (Join-Path $repo 'App/JixModMaker.csproj') "-p:IncludeVideoRuntime=$includeVideo" `
+    '-getProperty:Version,PortableLauncherName,PackageEditionLabel' | Out-String | ConvertFrom-Json).Properties
+if ($LASTEXITCODE -ne 0) { throw 'Cannot read expected package metadata.' }
+$launcher = $properties.PortableLauncherName + '.exe'
+if ($manifest.Version -ne $properties.Version -or $manifest.Launcher -ne $launcher -or
+    $manifest.EditionLabel -ne $properties.PackageEditionLabel) { throw 'Package metadata does not match the project.' }
 if (!$WorkDirectory) { $WorkDirectory = Join-Path $repo ('artifacts/portable-tests-' + [Guid]::NewGuid().ToString('N')) }
 if (Test-Path -LiteralPath $WorkDirectory) { throw "Test directory already exists: $WorkDirectory" }
 $work = (New-Item -ItemType Directory -Path $WorkDirectory).FullName
-$relocated = Join-Path $work ($project.SelectSingleNode('//PortableLauncherName').InnerText + ' moved package')
+$relocated = Join-Path $work ($properties.PortableLauncherName + ' moved package')
 Copy-Item -LiteralPath $package -Destination $relocated -Recurse
 $data = Join-Path $relocated 'data'
 $entries = @(Get-ChildItem -LiteralPath $relocated -Force)
@@ -26,9 +33,20 @@ $exe = Join-Path $relocated $launcher
 $bytes = [IO.File]::ReadAllBytes($exe)
 $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
 if ([BitConverter]::ToUInt16($bytes, $peOffset + 24 + 68) -ne 2) { throw 'Launcher is not a GUI executable.' }
-if ([Diagnostics.FileVersionInfo]::GetVersionInfo($exe).ProductVersion -notlike ($project.SelectSingleNode('//Version').InnerText + '*')) {
+if ([Diagnostics.FileVersionInfo]::GetVersionInfo($exe).ProductVersion -notlike ($properties.Version + '*')) {
     throw 'Launcher version resources do not match the application.'
 }
+Add-Type -Path (Join-Path $repo 'libs/Mono.Cecil.dll')
+$assembly = [Mono.Cecil.AssemblyDefinition]::ReadAssembly((Join-Path $data 'JixModMaker.dll'))
+try {
+    $editionAttribute = @($assembly.CustomAttributes | Where-Object {
+        $_.AttributeType.FullName -eq 'System.Reflection.AssemblyMetadataAttribute' -and
+        $_.ConstructorArguments[0].Value -eq 'PackageEdition'
+    })
+    if ($editionAttribute.Count -ne 1 -or $editionAttribute[0].ConstructorArguments[1].Value -ne $manifest.Edition) {
+        throw 'Application edition does not match its launcher and package metadata.'
+    }
+} finally { $assembly.Dispose() }
 Add-Type -AssemblyName System.Drawing
 $icon = [Drawing.Icon]::ExtractAssociatedIcon($exe)
 if ($null -eq $icon) { throw 'Launcher icon is missing.' }

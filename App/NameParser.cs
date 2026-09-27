@@ -38,7 +38,7 @@ public class AssetCategory
     {
         "Bust" => 0, "Card" => 1, "Card2" => 2, "ThinCard" => 3,
         "ProfilePhoto" => 4, "RolePhoto" => 5, "LevelUp" => 6, "Story" => 7,
-        "SkillAnimation" => 8, _ => 9
+        "SkillMovie" => 8, "SkillAnimation" => 9, _ => 10
     };
 
     /// <summary>卡片上显示的版本类型 (皮肤已在分组标题, 这里只显示类型)。</summary>
@@ -50,7 +50,8 @@ public class AssetCategory
             {
                 "Bust" => "半身", "Card" => "卡面", "Card2" => "卡面2", "ThinCard" => "细卡",
                 "ProfilePhoto" => "头像", "RolePhoto" => "角色照", "LevelUp" => "升级",
-                "Story" => "剧情", "HandCard" => "手牌", "SkillAnimation" => "技能动画 · " + Raw, _ => Kind
+                "Story" => "剧情", "HandCard" => "手牌", "SkillMovie" => "技能特写",
+                "SkillAnimation" => "Q版动作 · " + Raw, _ => Kind
             };
             return k + (Sfw ? " (和谐)" : "");
         }
@@ -64,12 +65,30 @@ public static class NameParser
         RegexOptions.Compiled);
     private static readonly Regex HandRe = new(
         @"^UT_HandCard_(?<id>\d+)(?<sfw>_sfw)?$", RegexOptions.Compiled);
-    private static readonly Regex VarRe = new(@"_(?<v>\d{2,}|Max)(?:_|$)", RegexOptions.Compiled);
+    private static readonly Regex VarRe = new(@"_(?<v>\d{2,}|Max)(?:_|$)", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex SkillRe = new(@"^VSkill_(?<series>Hero|Monster_?)(?<id>\d+)(?<rest>(?:_.*)?)$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    public static bool IsSkillMovie(string name) => name != null && SkillRe.IsMatch(name);
 
     public static AssetCategory Parse(string name)
     {
         var c = new AssetCategory { Raw = name, Series = "Other" };
         if (string.IsNullOrEmpty(name)) return c;
+
+        var skill = SkillRe.Match(name);
+        if (skill.Success)
+        {
+            c.Series = "Hero";
+            c.Kind = "SkillMovie";
+            c.HeroId = skill.Groups["id"].Value;
+            c.MonsterOverride = skill.Groups["series"].Value.StartsWith("Monster", StringComparison.OrdinalIgnoreCase);
+            string rest = skill.Groups["rest"].Value;
+            c.Sfw = rest.Contains("_sfw", StringComparison.OrdinalIgnoreCase);
+            var variant = VarRe.Match(rest);
+            if (variant.Success) c.Variant = NormalizeVariant(variant.Groups["v"].Value);
+            return c;
+        }
 
         var h = HeroRe.Match(name);
         if (h.Success)
@@ -80,7 +99,7 @@ public static class NameParser
             string rest = h.Groups["rest"].Value;
             c.Sfw = rest.Contains("_sfw");
             var vm = VarRe.Match(rest);
-            if (vm.Success) c.Variant = vm.Groups["v"].Value;
+            if (vm.Success) c.Variant = NormalizeVariant(vm.Groups["v"].Value);
             return c;
         }
 
@@ -106,8 +125,11 @@ public static class NameParser
             Series = "Hero",
             Kind = "SkillAnimation",
             HeroId = ownerHeroId,
-            Variant = ownerVariant ?? "",
+            Variant = NormalizeVariant(ownerVariant ?? ""),
             MonsterOverride = ownerIsMonster
         };
     }
+
+    private static string NormalizeVariant(string variant)
+        => variant.Equals("Max", StringComparison.OrdinalIgnoreCase) ? "Max" : variant;
 }

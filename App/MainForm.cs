@@ -22,6 +22,9 @@ public class MainForm : Form
     private TexRef _selectedAsset;
     private int _loadSeq;
     private int _previewSeq;
+    private CancellationTokenSource _moviePreview;
+    private bool _openingSkillMovie;
+    private bool _restoring;
     private MemoryStream _animationPreviewStream;
     private Button _selectedCategoryButton;
     private readonly List<Button> _navButtons = new();
@@ -44,7 +47,7 @@ public class MainForm : Form
     private string _sortedKey;
     private List<TexIndexEntry> _sortedRows;
 
-    public const string Version = "v2.3.0-preview.12";
+    public static string Version => AppBuildInfo.Version;
     private const string PageDashboard = "dashboard";
     private const string PageBrowse = "browse";
     private const string PagePack = "pack";
@@ -117,6 +120,7 @@ public class MainForm : Form
     private readonly Label _detailHint = Theme.Caption("");
     private readonly Button _replaceTextureBtn = Theme.FlatButton("替换贴图");
     private readonly Button _replaceAnimationBtn = Theme.FlatButton("替换为视频 / GIF");
+    private readonly Button _restoreResourceBtn = Theme.FlatButton("还原当前资源包");
     private readonly Button _exportPngBtn = Theme.FlatButton("导出PNG");
     private readonly Button _exportBundleZipBtn = Theme.FlatButton("导出当前Bundle ZIP");
     private readonly Button _replaceBundleBtn = Theme.FlatButton("替换所在资源包");
@@ -127,7 +131,7 @@ public class MainForm : Form
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         DoubleBuffered = true;
         AutoScaleMode = AutoScaleMode.Font;
-        Text = "吉星派对 Mod 助手  " + Version;
+        Text = AppBuildInfo.WindowTitle;
         Width = 1400;
         Height = 860;
         MinimumSize = new Size(1100, 640);
@@ -490,7 +494,7 @@ public class MainForm : Form
         _resourceList.Resize += (_, _) => LayoutResourceListColumns();
         _resourceList.MouseDoubleClick += (_, _) =>
         {
-            if (IsSkillAnimationCandidate(_selectedAsset)) OpenSkillAnimation(_selectedAsset);
+            if (IsSkillAnimationCandidate(_selectedAsset) || _selectedAsset?.IsSkillMovie == true) OpenDynamicReplacement(_selectedAsset);
             else if (_selectedAsset is { IsTexture: true }) PickAndReplaceTexture(_selectedAsset);
         };
         _resourceList.MouseUp += (_, e) =>
@@ -510,6 +514,7 @@ public class MainForm : Form
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("定位文件", null, (_, _) => { if (_selectedAsset != null) LocateBundle(_selectedAsset); });
         var animationItem = menu.Items.Add("替换为视频 / GIF...", null, (_, _) => OpenDynamicReplacement(_selectedAsset));
+        var restoreItem = menu.Items.Add("还原当前资源...", null, async (_, _) => await RestoreSelectedResourceAsync());
         menu.Opening += (_, e) =>
         {
             bool has = _selectedAsset != null;
@@ -519,7 +524,8 @@ public class MainForm : Form
             menu.Items[2].Enabled = has;
             menu.Items[4].Enabled = has;
             animationItem.Visible = IsDynamicReplacementCandidate(_selectedAsset);
-            animationItem.Text = IsSkillAnimationCandidate(_selectedAsset) ? "替换技能动画..." : "替换为视频 / GIF...";
+            animationItem.Text = _selectedAsset?.IsSkillMovie == true ? "替换技能特写..." : IsSkillAnimationCandidate(_selectedAsset) ? "替换Q版动作..." : "替换为视频 / GIF...";
+            restoreItem.Enabled = CanRestoreSelection();
             e.Cancel = !has;
         };
         _resourceList.ContextMenuStrip = menu;
@@ -601,7 +607,7 @@ public class MainForm : Form
             Margin = new Padding(0, 0, 0, 10)
         };
         buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        foreach (var b in new[] { _replaceTextureBtn, _replaceAnimationBtn, _exportPngBtn, _exportBundleZipBtn, _replaceBundleBtn, _locateBtn })
+        foreach (var b in new[] { _replaceTextureBtn, _replaceAnimationBtn, _restoreResourceBtn, _exportPngBtn, _exportBundleZipBtn, _replaceBundleBtn, _locateBtn })
         {
             b.AutoSize = false;
             b.Dock = DockStyle.Top;
@@ -617,6 +623,7 @@ public class MainForm : Form
 
         _replaceTextureBtn.Click += (_, _) => { if (_selectedAsset != null) PickAndReplaceTexture(_selectedAsset); };
         _replaceAnimationBtn.Click += (_, _) => OpenDynamicReplacement(_selectedAsset);
+        _restoreResourceBtn.Click += async (_, _) => await RestoreSelectedResourceAsync();
         _exportPngBtn.Click += (_, _) => { if (_selectedAsset != null) ExportSingle(_selectedAsset); };
         _exportBundleZipBtn.Click += (_, _) => { if (_selectedAsset != null) ExportBundleZip(new[] { _selectedAsset }, "当前资源包"); };
         _replaceBundleBtn.Click += (_, _) => { if (_selectedAsset != null) ReplaceBundleFile(_selectedAsset); };
@@ -638,13 +645,13 @@ public class MainForm : Form
         _preview.AllowDrop = true;
         _preview.DragEnter += (_, e) =>
         {
-            e.Effect = _selectedAsset is { IsTexture: true } && e.Data.GetDataPresent(DataFormats.FileDrop)
+            e.Effect = _selectedAsset is { IsVisual: true } && e.Data.GetDataPresent(DataFormats.FileDrop)
                 ? DragDropEffects.Copy
                 : DragDropEffects.None;
         };
         _preview.DragDrop += (_, e) =>
         {
-            if (_selectedAsset is not { IsTexture: true }) return;
+            if (_selectedAsset is not { IsVisual: true }) return;
             var files = (string[])e.Data.GetData(DataFormats.FileDrop);
             if (files is { Length: > 0 })
                 DoReplace(null, files[0], explicitAsset: _selectedAsset);
@@ -841,7 +848,7 @@ public class MainForm : Form
             MakeButton("检测游戏", (_, _) => DetectGame()),
             MakeButton("打开游戏目录", (_, _) => OpenGameDir()),
             MakeButton("打开任意资源文件夹", (_, _) => OpenFolder()),
-            MakeButton("启动游戏", (_, _) => LaunchGame()));
+            MakeButton("通过 Steam 启动", (_, _) => LaunchGame()));
 
         AddPageCard("索引",
             _index == null
@@ -856,6 +863,14 @@ public class MainForm : Form
             MakeButton("导出已改Bundle ZIP", (_, _) => ExportModifiedBundlesZip()),
             MakeButton("迁移旧Mod", (_, _) => MigrateOldMods()),
             MakeButton("全部还原", (_, _) => RestoreAll()));
+
+        var dynamicReceipt = string.IsNullOrWhiteSpace(_folder) ? null : PortraitReplacement.ReadReceipt(AnimatedPortraitRoot());
+        var restoreDynamic = MakeButton("还原动态替换", async (_, _) => await RestoreDynamicAsync());
+        restoreDynamic.Enabled = dynamicReceipt != null && !_restoring;
+        AddPageCard("动态替换",
+            dynamicReceipt == null ? "当前没有动态立绘 / 卡牌替换记录"
+                : $"{dynamicReceipt.Texture}\n{dynamicReceipt.SourceName}\n借用视频：{dynamicReceipt.VideoKey}",
+            restoreDynamic);
     }
 
     private Button MakeButton(string text, EventHandler handler, int width = 142)
@@ -1029,7 +1044,7 @@ public class MainForm : Form
                 Name = entry.TextureName,
                 Source = "作品集",
                 PathId = entry.PathId,
-                Kind = ResourceKinds.Texture
+                Kind = entry.Kind
             };
             ExportBundleZip(new[] { target }, entry.TextureName ?? entry.Bundle ?? "bundle");
         }, 140));
@@ -1053,7 +1068,7 @@ public class MainForm : Form
         _recursiveFolder = recursive;
         _backupDir = Path.Combine(_folder, "_原始备份");
         _ws = PackService.LoadWorkspace(_folder);
-        Text = $"吉星派对 Mod 助手 {Version}  [{path}]";
+        Text = $"{AppBuildInfo.WindowTitle}  [{path}]";
         UpdateDashboard();
     }
 
@@ -1105,21 +1120,8 @@ public class MainForm : Form
     {
         try
         {
-            var install = GameLocator.Find();
-            if (!string.IsNullOrWhiteSpace(install?.ExePath) && File.Exists(install.ExePath))
-            {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = install.ExePath,
-                    WorkingDirectory = Path.GetDirectoryName(install.ExePath)!,
-                    UseShellExecute = true
-                });
-                _status.Text = "已启动游戏：" + install.ExePath;
-                return;
-            }
-
-            Process.Start(new ProcessStartInfo($"steam://rungameid/{GameLocator.AppId}") { UseShellExecute = true });
-            _status.Text = "未找到 exe，已尝试通过 Steam 启动。";
+            Process.Start(GameStartup.SteamStart());
+            _status.Text = "已向 Steam 发送启动请求";
         }
         catch (Exception ex)
         {
@@ -1195,7 +1197,7 @@ public class MainForm : Form
             counts = _index.TextureCategoryCounts != null
                 ? new Dictionary<string, int>(_index.TextureCategoryCounts, StringComparer.OrdinalIgnoreCase)
                 : new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            counts[ResourceCategories.AllId] = _index.LightweightTextureCount;
+            counts[ResourceCategories.AllId] = _index.CountKind(ResourceKinds.Texture);
         }
         else if (_index?.Lightweight == true)
         {
@@ -1207,10 +1209,10 @@ public class MainForm : Form
         else
         {
             counts = (_index?.Items ?? new List<TexIndexEntry>())
-                .Where(i => i.Kind == kind)
+                .Where(i => ResourceKinds.InBrowser(i.Kind, kind))
                 .GroupBy(i => i.CategoryId ?? ResourceCategories.AllId)
                 .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
-            counts[ResourceCategories.AllId] = (_index?.Items ?? new List<TexIndexEntry>()).Count(i => i.Kind == kind);
+            counts[ResourceCategories.AllId] = (_index?.Items ?? new List<TexIndexEntry>()).Count(i => ResourceKinds.InBrowser(i.Kind, kind));
         }
 
         var defs = ResourceCategories.ForKind(kind).ToList();
@@ -1385,11 +1387,12 @@ public class MainForm : Form
                 && _index.TextureRefsByCategory.TryGetValue(ResourceCategories.CharacterId, out var refs))
                 assets = refs.Select(r => NameParser.Parse(r.Name, r.OwnerHeroId, r.OwnerVariant,
                     r.IsSkillAnimation, r.OwnerIsMonster));
+            assets = assets.Concat(_index.Items.Where(i => i.Kind == ResourceKinds.SkillMovie).Select(ParseAsset));
         }
         else if (_index != null)
         {
             assets = _index.Items
-                .Where(i => i.Kind == ResourceKinds.Texture
+                .Where(i => ResourceKinds.InBrowser(i.Kind, ResourceKinds.Texture)
                     && string.Equals(i.CategoryId, ResourceCategories.CharacterId, StringComparison.OrdinalIgnoreCase))
                 .Select(ParseAsset);
         }
@@ -1490,7 +1493,7 @@ public class MainForm : Form
             return _sortedRows.Skip(offset).Take(cap).ToList();
         }
         var filtered = _index.Items
-            .Where(i => i.Kind == kind)
+            .Where(i => ResourceKinds.InBrowser(i.Kind, kind))
             .Where(i => categoryId == ResourceCategories.AllId || string.Equals(i.CategoryId, categoryId, StringComparison.OrdinalIgnoreCase))
             .Where(i => MatchesQuery(i.Name, i.Bundle, query))
             .Where(MatchesHeroFilter);
@@ -1505,6 +1508,23 @@ public class MainForm : Form
 
     private List<TexIndexEntry> GetLightweightTextureRows(string categoryId, string query, int offset, int cap, out int total)
     {
+        if (_index.Items.Any(i => i.Kind == ResourceKinds.SkillMovie))
+        {
+            string key = CurrentBrowseKey(ResourceKinds.Texture, categoryId, query);
+            if (ReferenceEquals(_sortedIndex, _index) && _sortedKey == key && _sortedRows != null)
+            {
+                total = _sortedRows.Count;
+                return _sortedRows.Skip(offset).Take(cap).ToList();
+            }
+            var rows = SortAssetRows(_index.EnumerateLightweightTextures().Concat(_index.Items.Where(i => i.Kind == ResourceKinds.SkillMovie))
+                .Where(i => categoryId == ResourceCategories.AllId || i.CategoryId == categoryId)
+                .Where(i => MatchesQuery(i.Name, i.Bundle, query)).Where(MatchesHeroFilter), ResourceKinds.Texture, categoryId);
+            _sortedIndex = _index;
+            _sortedKey = key;
+            _sortedRows = rows;
+            total = rows.Count;
+            return rows.Skip(offset).Take(cap).ToList();
+        }
         if (categoryId == ResourceCategories.AllId && string.IsNullOrWhiteSpace(query) && !HasHeroFilter())
         {
             total = _index.LightweightTextureCount;
@@ -1665,13 +1685,13 @@ public class MainForm : Form
             OwnerVariant = e.OwnerVariant,
             OwnerIsMonster = e.OwnerIsMonster,
             Display = DisplayName(e),
-            Modded = e.Kind == ResourceKinds.Texture && PackService.Contains(_ws, e.Bundle, e.PathId, e.Name)
+            Modded = ResourceKinds.InBrowser(e.Kind, ResourceKinds.Texture) && PackService.Contains(_ws, e.Bundle, e.PathId, e.Name)
         };
     }
 
     private string DisplayName(TexIndexEntry e)
     {
-        if (e.Kind != ResourceKinds.Texture) return e.Name;
+        if (!ResourceKinds.InBrowser(e.Kind, ResourceKinds.Texture)) return e.Name;
         var parsed = ParseAsset(e);
         if (!parsed.IsHero) return e.Name;
         if (IsHeroSkinCategory(e.CategoryId))
@@ -1986,7 +2006,7 @@ public class MainForm : Form
 
     private string ResourceListGroupLabel(TexRef asset)
     {
-        if (asset.Kind != ResourceKinds.Texture) return asset.CategoryLabel ?? ResourceKinds.Label(asset.Kind);
+        if (!asset.IsVisual) return asset.CategoryLabel ?? ResourceKinds.Label(asset.Kind);
         var parsed = ParseAsset(asset);
         if (parsed.IsHero)
             return $"{_naming.Display(parsed.GroupKey)} / {parsed.Skin}";
@@ -1998,7 +2018,7 @@ public class MainForm : Form
     private async Task LoadThumbnailsAsync(int seq, List<RoundedCard> cards)
     {
         var candidates = cards
-            .Where(c => c.Tag is TexRef a && a.IsTexture)
+            .Where(c => c.Tag is TexRef a && a.IsVisual)
             .ToList();
         if (candidates.Count == 0) return;
 
@@ -2015,9 +2035,20 @@ public class MainForm : Form
             Dictionary<long, byte[]> previews = null;
             try
             {
-                previews = await Task.Run(() =>
+                previews = await Task.Run(async () =>
                 {
                     var assets = group.cards.Select(c => (TexRef)c.Tag).ToList();
+                    if (assets[0].IsSkillMovie)
+                    {
+                        var movies = new Dictionary<long, byte[]>();
+                        foreach (var asset in assets)
+                        {
+                            if (seq != _loadSeq) break;
+                            asset.PathId = SkillMovieEngine.Read(asset.BundlePath, asset.Name).PathId;
+                            movies[asset.PathId] = await SkillMovieEngine.PreviewAsync(asset.BundlePath, asset.Name, false, CancellationToken.None);
+                        }
+                        return movies;
+                    }
                     HydrateTextureGroup(assets);
                     return _engine.DecodePngBatch(group.path, assets.Select(a => a.PathId), Sc(SrcThumb));
                 });
@@ -2135,17 +2166,18 @@ public class MainForm : Form
             BackColor = Color.Transparent
         };
 
-        var card = new RoundedCard { Margin = new Padding(6), Tag = asset, AllowDrop = asset.IsTexture };
+        var card = new RoundedCard { Margin = new Padding(6), Tag = asset, AllowDrop = asset.IsVisual };
         var actions = new Panel
         {
             BackColor = Color.Transparent,
-            Cursor = asset.IsTexture ? Cursors.Hand : Cursors.Default
+            Cursor = asset.IsVisual ? Cursors.Hand : Cursors.Default
         };
-        actions.Paint += (_, e) => PaintCardActions(e.Graphics, actions.ClientRectangle, asset.IsTexture);
+        actions.Paint += (_, e) => PaintCardActions(e.Graphics, actions.ClientRectangle, asset.IsVisual);
         actions.MouseClick += (_, e) =>
         {
-            if (!asset.IsTexture) return;
+            if (!asset.IsVisual) return;
             if (e.X < actions.Width / 2) PickAndReplaceTexture(asset, card);
+            else if (asset.IsSkillMovie) ExportBundleZip(new[] { asset }, asset.Name);
             else ExportSingle(asset);
         };
 
@@ -2165,7 +2197,7 @@ public class MainForm : Form
         AttachDragExport(visual, () => asset);
         AttachDragExport(pic, () => asset);
 
-        if (asset.IsTexture)
+        if (asset.IsVisual)
         {
             void DragEnter(object s, DragEventArgs e)
             {
@@ -2196,6 +2228,8 @@ public class MainForm : Form
         }
 
         var menu = new ContextMenuStrip();
+        if (asset.IsSkillMovie)
+            menu.Items.Add("替换技能特写...", null, (_, _) => OpenSkillMovie(asset));
         if (asset.IsTexture)
         {
             menu.Items.Add("替换贴图...", null, (_, _) => PickAndReplaceTexture(asset, card));
@@ -2214,9 +2248,9 @@ public class MainForm : Form
         actions.ContextMenuStrip = menu;
         foreach (Control child in visual.Controls) child.ContextMenuStrip = menu;
 
-        card.DoubleClick += (_, _) => { if (asset.IsTexture) PickAndReplaceTexture(asset, card); else LocateBundle(asset); };
-        visual.DoubleClick += (_, _) => { if (asset.IsTexture) PickAndReplaceTexture(asset, card); else LocateBundle(asset); };
-        lbl.DoubleClick += (_, _) => { if (asset.IsTexture) PickAndReplaceTexture(asset, card); else LocateBundle(asset); };
+        card.DoubleClick += (_, _) => { if (asset.IsVisual) PickAndReplaceTexture(asset, card); else LocateBundle(asset); };
+        visual.DoubleClick += (_, _) => { if (asset.IsVisual) PickAndReplaceTexture(asset, card); else LocateBundle(asset); };
+        lbl.DoubleClick += (_, _) => { if (asset.IsVisual) PickAndReplaceTexture(asset, card); else LocateBundle(asset); };
 
         return card;
     }
@@ -2227,14 +2261,15 @@ public class MainForm : Form
         ResourceKinds.Text => "TXT",
         ResourceKinds.Mesh => "MESH",
         ResourceKinds.Animation => "ANIM",
+        ResourceKinds.SkillMovie => "VIDEO",
         _ => "RES"
     };
 
     private static string CardText(TexRef asset)
     {
-        var size = asset.IsTexture
+        var size = asset.IsVisual
             ? asset.Width > 0 && asset.Height > 0 ? $"{asset.Width}x{asset.Height}" : "点选预览"
-            : asset.Kind;
+            : ResourceKinds.Label(asset.Kind);
         return $"{asset.Display ?? asset.Name}\n{size}";
     }
 
@@ -2279,6 +2314,7 @@ public class MainForm : Form
 
     private void SelectAsset(TexRef asset, byte[] thumbnail)
     {
+        _moviePreview?.Cancel();
         _selectedAsset = asset;
         UpdateDetailText(asset);
         var oldPreview = _preview.Image;
@@ -2325,19 +2361,23 @@ public class MainForm : Form
     private void UpdateDetailText(TexRef asset)
     {
         _detailTitle.Text = asset.Name;
+        if (asset.IsSkillMovie && asset.MovieTiming != null)
+            _detailTitle.Text += $"\n原技能 {asset.MovieTiming.Duration:0.###} 秒 · {asset.MovieTiming.TotalFrames} 帧";
         var path = ShortDisplayPath(asset.BundlePath);
         _detailMeta.Text =
             $"类型: {ResourceKinds.Label(asset.Kind)}\n" +
             $"分类: {asset.CategoryLabel}\n" +
-            $"尺寸: {(asset.IsTexture ? (asset.Width > 0 ? $"{asset.Width}x{asset.Height}" : "点选后解析") : "-")}\n" +
+            $"尺寸: {(asset.IsVisual ? (asset.Width > 0 ? $"{asset.Width}x{asset.Height}" : "点选后解析") : "-")}\n" +
             $"格式: {asset.Format ?? "-"}\n" +
             $"来源: {asset.Source ?? "-"}";
         _detailPath.Text = $"Bundle: {asset.BundleName}\nPathId: {asset.PathId}\n位置: {path}";
-        _detailHint.Text = asset.IsSkillAnimation
-            ? "技能动画支持拖入视频 / GIF；会按原生帧数和 Sprite 网格重组，只修改当前资源包。"
+        _detailHint.Text = asset.IsSkillMovie ? "原生技能特写 · 当前资源包 · 游戏 DLL 不变"
+            : asset.IsSkillAnimation
+            ? "Q版动作 · 原生帧数与 Sprite 网格 · 只修改当前资源包"
             : asset.IsTexture
             ? "贴图支持资产级替换、裁切、导出 PNG。"
             : "非贴图当前支持索引、定位、替换整个资源包；资产级音频/动画写回仍需单独编码器。";
+        if (ReferenceEquals(asset, _selectedAsset)) UpdateRestoreButton(true);
     }
 
     private static string ShortDisplayPath(string path)
@@ -2387,6 +2427,7 @@ public class MainForm : Form
 
     private void LoadPreviewAsync(TexRef asset, byte[] thumbnail)
     {
+        if (asset.IsSkillMovie) { LoadSkillMoviePreview(asset); return; }
         if (!asset.IsTexture || asset.PathId == 0) return;
         int seq = ++_previewSeq;
         string root = AnimatedPortraitRoot();
@@ -2399,7 +2440,7 @@ public class MainForm : Form
                 {
                     var info = SkillAnimationEngine.Inspect(asset.BundlePath, asset.PathId, asset.Name);
                     return (Bytes: SkillAnimationEngine.DecodeFramePreview(asset.BundlePath, asset.PathId, 0),
-                        State: $"技能动画 · {info.FrameNames.Count} 帧 · 预览第 1 帧", Animated: false);
+                        State: $"Q版动作 · {info.FrameNames.Count} 帧 · 预览第 1 帧", Animated: false);
                 }
                 var receipt = PortraitReplacement.ReadReceipt(root, asset.Name);
                 if (receipt?.Texture == asset.Name)
@@ -2445,12 +2486,13 @@ public class MainForm : Form
     private void SetDetailButtons(bool hasAsset, bool isTexture)
     {
         bool skill = IsSkillAnimationCandidate(_selectedAsset);
-        _replaceTextureBtn.Enabled = hasAsset && isTexture && !skill;
-        _replaceAnimationBtn.Enabled = hasAsset && isTexture && IsDynamicReplacementCandidate(_selectedAsset);
-        _replaceAnimationBtn.Text = skill ? "替换技能动画" : "替换为视频 / GIF";
+        _replaceTextureBtn.Enabled = hasAsset && isTexture && !skill && !_restoring;
+        _replaceAnimationBtn.Enabled = hasAsset && IsDynamicReplacementCandidate(_selectedAsset) && !_restoring;
+        _replaceAnimationBtn.Text = _selectedAsset?.IsSkillMovie == true ? "替换技能特写" : skill ? "替换Q版动作" : "替换为视频 / GIF";
+        UpdateRestoreButton(hasAsset);
         _exportPngBtn.Enabled = hasAsset && isTexture;
         _exportBundleZipBtn.Enabled = hasAsset;
-        _replaceBundleBtn.Enabled = hasAsset;
+        _replaceBundleBtn.Enabled = hasAsset && !_restoring;
         _locateBtn.Enabled = hasAsset;
     }
 
@@ -2474,6 +2516,7 @@ public class MainForm : Form
 
     private void PickAndReplaceTexture(TexRef asset, RoundedCard card = null, bool forceCrop = false)
     {
+        if (asset.IsSkillMovie || IsSkillAnimationCandidate(asset)) { OpenDynamicReplacement(asset); return; }
         if (!EnsureTextureReady(asset)) return;
         using var dlg = new OpenFileDialog { Filter = "图片|*.png;*.jpg;*.jpeg;*.bmp;*.webp" };
         if (dlg.ShowDialog() != DialogResult.OK) return;
@@ -2485,13 +2528,13 @@ public class MainForm : Form
         var asset = explicitAsset ?? (TexRef)card.Tag;
         if (AnimatedPortraitDialog.IsVideo(imagePath))
         {
-            if (!IsDynamicReplacementCandidate(asset)) { _status.Text = "视频替换支持角色立绘、手牌、事件卡和技能动画。"; return; }
+            if (!IsDynamicReplacementCandidate(asset)) { _status.Text = "视频替换支持角色立绘、手牌、事件卡和技能特写。"; return; }
             OpenDynamicReplacement(asset, imagePath);
             return;
         }
-        if (IsSkillAnimationCandidate(asset))
+        if (IsSkillAnimationCandidate(asset) || asset.IsSkillMovie)
         {
-            _status.Text = "技能动画请拖入视频或 GIF。";
+            _status.Text = "动画替换请拖入视频或 GIF。";
             return;
         }
         if (!asset.IsTexture)
@@ -2658,7 +2701,7 @@ public class MainForm : Form
                 if (indexed != null) return indexed;
                 var fallback = Path.Combine(_folder, e.Bundle ?? "");
                 return File.Exists(fallback)
-                    ? new TexRef { BundlePath = fallback, BundleName = e.Bundle, Name = e.TextureName, Source = "作品集", PathId = e.PathId, Kind = ResourceKinds.Texture }
+                    ? new TexRef { BundlePath = fallback, BundleName = e.Bundle, Name = e.TextureName, Source = "作品集", PathId = e.PathId, Kind = e.Kind }
                     : null;
             })
             .Where(a => a != null)
@@ -2673,12 +2716,49 @@ public class MainForm : Form
     private static bool IsSkillAnimationCandidate(TexRef asset) => SkillAnimationEngine.IsCandidate(asset);
 
     private static bool IsDynamicReplacementCandidate(TexRef asset)
-        => IsAnimatedPortraitCandidate(asset) || IsSkillAnimationCandidate(asset);
+        => IsAnimatedPortraitCandidate(asset) || IsSkillAnimationCandidate(asset) || asset?.IsSkillMovie == true;
 
     private void OpenDynamicReplacement(TexRef asset, string videoFile = null)
     {
-        if (IsSkillAnimationCandidate(asset)) OpenSkillAnimation(asset, videoFile);
+        if (asset?.IsSkillMovie == true) OpenSkillMovie(asset, videoFile);
+        else if (IsSkillAnimationCandidate(asset)) OpenSkillAnimation(asset, videoFile);
         else OpenAnimatedPortrait(asset, videoFile);
+    }
+
+    private async void LoadSkillMoviePreview(TexRef asset)
+    {
+        _moviePreview?.Cancel();
+        using var operation = new CancellationTokenSource();
+        _moviePreview = operation;
+        int seq = ++_previewSeq;
+        try
+        {
+            _status.Text = "正在读取原生技能特写...";
+            var info = await Task.Run(() => SkillMovieEngine.InspectAsync(asset.BundlePath, asset.Name, operation.Token));
+            if (IsDisposed || _selectedAsset != asset || seq != _previewSeq) return;
+            asset.PathId = info.PathId;
+            asset.Width = info.Timing.Width;
+            asset.Height = info.Timing.Height;
+            asset.Format = $"USM / 原技能 {info.Timing.Duration:0.###} 秒";
+            asset.MovieTiming = info.Timing;
+            UpdateDetailText(asset);
+            _detailHint.Text = SkillAnimationDialog.TimingNotice(info.Timing, null) + "\n原生技能特写 · 游戏 DLL 不变";
+            byte[] bytes = await Task.Run(() => SkillMovieEngine.PreviewAsync(asset.BundlePath, asset.Name, true, operation.Token));
+            if (IsDisposed || _selectedAsset != asset || seq != _previewSeq) return;
+            var old = _preview.Image;
+            _preview.Image = null;
+            old?.Dispose();
+            _animationPreviewStream?.Dispose();
+            _animationPreviewStream = new MemoryStream(bytes);
+            _preview.Image = Image.FromStream(_animationPreviewStream);
+            _status.Text = $"技能特写 · 原时长 {info.Timing.Duration:0.###} 秒 · 当前资源包的动态预览";
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (!IsDisposed && _selectedAsset == asset && seq == _previewSeq) _status.Text = "技能特写预览失败：" + ex.Message;
+        }
+        finally { if (ReferenceEquals(_moviePreview, operation)) _moviePreview = null; }
     }
 
     private void OpenAnimatedPortrait(TexRef asset, string videoFile = null)
@@ -2692,6 +2772,7 @@ public class MainForm : Form
         if (_selectedAsset == asset)
         {
             UpdateDetailText(asset);
+            SetDetailButtons(true, asset.IsTexture);
             LoadPreviewAsync(asset, null);
         }
     }
@@ -2701,7 +2782,7 @@ public class MainForm : Form
         if (!IsSkillAnimationCandidate(asset) || !EnsureTextureReady(asset)) return;
         try
         {
-            _status.Text = "正在读取技能动画帧结构...";
+            _status.Text = "正在读取Q版动作帧结构...";
             var info = await Task.Run(() => SkillAnimationEngine.Inspect(asset.BundlePath, asset.PathId, asset.Name));
             if (IsDisposed) return;
             using var dialog = new SkillAnimationDialog(asset, info, _backupDir, videoFile);
@@ -2716,7 +2797,7 @@ public class MainForm : Form
                     TextureName = asset.Name,
                     Width = asset.Width,
                     Height = asset.Height,
-                    Label = "技能动画"
+                    Label = "Q版动作"
                 });
                 asset.Modded = true;
             }
@@ -2739,16 +2820,163 @@ public class MainForm : Form
         }
         catch (Exception ex)
         {
-            _status.Text = "技能动画读取失败：" + ex.Message;
+            _status.Text = "Q版动作读取失败：" + ex.Message;
             MessageBox.Show(_status.Text, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private async void OpenSkillMovie(TexRef asset, string videoFile = null)
+    {
+        if (asset?.IsSkillMovie != true || _openingSkillMovie) return;
+        _openingSkillMovie = true;
+        try
+        {
+            _status.Text = "正在读取技能特写的原生尺寸与时长...";
+            var info = await Task.Run(() => SkillMovieEngine.InspectAsync(asset.BundlePath, asset.Name, CancellationToken.None));
+            if (IsDisposed) return;
+            asset.PathId = info.PathId;
+            asset.Width = info.Timing.Width;
+            asset.Height = info.Timing.Height;
+            asset.Format = $"USM / 原技能 {info.Timing.Duration:0.###} 秒";
+            asset.MovieTiming = info.Timing;
+            using var dialog = new SkillAnimationDialog(asset, info, _backupDir, videoFile);
+            dialog.ShowDialog(this);
+            _status.Text = dialog.ResultMessage;
+            if (dialog.Replaced)
+            {
+                PackService.Upsert(_ws, new ModEntry
+                {
+                    Bundle = asset.BundleName, PathId = asset.PathId, TextureName = asset.Name,
+                    Width = asset.Width, Height = asset.Height, Label = "技能特写", Kind = ResourceKinds.SkillMovie
+                });
+                asset.Modded = true;
+            }
+            else if (dialog.Restored)
+            {
+                _ws.Entries.RemoveAll(entry => string.Equals(entry.Bundle, asset.BundleName, StringComparison.OrdinalIgnoreCase));
+                asset.Modded = false;
+            }
+            if (dialog.Replaced || dialog.Restored)
+            {
+                PackService.SaveWorkspace(_folder, _ws);
+                UpdateDashboard();
+                var cards = _flow.Controls.OfType<RoundedCard>().Where(card => card.Tag is TexRef target &&
+                    target.BundlePath == asset.BundlePath && target.Name == asset.Name).ToList();
+                foreach (var card in cards)
+                {
+                    card.SetFill(asset.Modded ? Theme.CardMod : Theme.Card);
+                    card.Controls[1].Text = CardText(asset);
+                }
+                _ = LoadThumbnailsAsync(_loadSeq, cards);
+            }
+            if (_selectedAsset == asset)
+            {
+                UpdateDetailText(asset);
+                UpdateSelectedListRow(asset);
+                LoadPreviewAsync(asset, null);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!IsDisposed) MessageBox.Show(this, ex.Message, "技能特写未写入", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally { _openingSkillMovie = false; }
     }
 
     private string AnimatedPortraitRoot() => string.Equals(Path.GetFileName(_folder), "StandaloneWindows64", StringComparison.OrdinalIgnoreCase)
         && Directory.Exists(_index?.HotDir) ? _index.HotDir : _folder;
 
+    private PortraitReplacement.Receipt SelectedDynamicReceipt() => AnimatedPortraitPatch.IsSupportedTarget(_selectedAsset?.Name) && !string.IsNullOrWhiteSpace(_folder)
+        ? PortraitReplacement.ReadReceipt(AnimatedPortraitRoot(), _selectedAsset.Name) : null;
+
+    private void UpdateRestoreButton(bool hasAsset)
+    {
+        _restoreResourceBtn.Text = SelectedDynamicReceipt() != null ? "还原动态替换" : "还原当前资源包";
+        _restoreResourceBtn.Enabled = hasAsset && !_restoring && CanRestoreSelection();
+    }
+
+    private bool CanRestoreSelection() => _selectedAsset != null && (SelectedDynamicReceipt() != null ||
+        !string.IsNullOrWhiteSpace(_selectedAsset.BundlePath) && !string.IsNullOrWhiteSpace(_backupDir) &&
+        File.Exists(ResourceLocator.BackupPath(_selectedAsset.BundlePath, _backupDir, _selectedAsset.BundleName)));
+
+    private async Task RestoreSelectedResourceAsync()
+    {
+        if (_restoring || _selectedAsset == null) return;
+        if (SelectedDynamicReceipt() != null) { await RestoreDynamicAsync(); return; }
+        var asset = _selectedAsset;
+        string folder = _folder, backupDir = _backupDir;
+        var workspace = _ws;
+        _restoring = true;
+        SetDetailButtons(true, asset.IsTexture);
+        try
+        {
+            PortraitReplacement.EnsureGameClosed();
+            var plan = await Task.Run(() => BundleRestore.Prepare(asset.BundlePath, backupDir, asset.BundleName));
+            if (IsDisposed) return;
+            if (MessageBox.Show(this,
+                $"还原 {asset.Name} 所在资源包？\n\n该包会恢复到首次备份的版本，同包中的其他修改也会撤销。其他资源包不动。",
+                "还原当前资源包", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
+            _status.Text = "正在还原并校验资源包...";
+            await Task.Run(() =>
+            {
+                if (asset.IsSkillMovie)
+                {
+                    SkillMovieEngine.Read(plan.Backup, asset.Name);
+                    AnimatedPortraitPatch.VerifyTypeLayout(plan.Target, plan.Backup);
+                }
+                BundleRestore.Apply(plan);
+            });
+            workspace.Entries.RemoveAll(entry => string.Equals(entry.Bundle, asset.BundleName, StringComparison.OrdinalIgnoreCase));
+            PackService.SaveWorkspace(folder, workspace);
+            asset.Modded = false;
+            if (IsDisposed || !string.Equals(_folder, folder, StringComparison.OrdinalIgnoreCase)) return;
+            UpdateDashboard();
+            ResetBrowseState();
+            if (_activePage == PageBrowse) ShowCurrentAssets();
+            if (_selectedAsset == asset) { UpdateDetailText(asset); LoadPreviewAsync(asset, null); }
+            _status.Text = "已还原并校验：" + asset.Name;
+        }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "还原未完成", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        finally
+        {
+            _restoring = false;
+            if (!IsDisposed) SetDetailButtons(_selectedAsset != null, _selectedAsset?.IsTexture == true);
+        }
+    }
+
+    private async Task RestoreDynamicAsync()
+    {
+        if (_restoring || string.IsNullOrWhiteSpace(_folder)) return;
+        string root = AnimatedPortraitRoot();
+        var receipt = PortraitReplacement.ReadReceipt(root);
+        if (receipt == null) { _status.Text = "当前没有动态替换记录"; return; }
+        if (MessageBox.Show(this,
+            receipt.Mode == IndependentVideoPatch.Mode
+                ? $"还原全部 {receipt.Portraits?.Count ?? 1} 个独立动态目标？\n\n恢复首次备份的程序集，删除本工具新增的独立视频。官方异画和其他 Mod 不动。"
+                : $"还原 {receipt.Texture} 的动态替换？\n\n将恢复首次动态修改前的程序集包和视频包，释放 {receipt.VideoKey}。其他 Mod 不动。",
+            "还原动态替换", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
+        _restoring = true;
+        SetDetailButtons(_selectedAsset != null, _selectedAsset?.IsTexture == true);
+        try
+        {
+            _status.Text = "正在还原动态替换...";
+            await Task.Run(() => PortraitReplacement.Restore(root));
+            if (IsDisposed) return;
+            if (_selectedAsset != null) { UpdateDetailText(_selectedAsset); LoadPreviewAsync(_selectedAsset, null); }
+            if (_activePage == PageTools) ShowToolsPage();
+            _status.Text = receipt.Mode == IndependentVideoPatch.Mode ? "已还原动态替换并移除独立视频" : "已还原动态替换并释放原生视频槽位";
+        }
+        catch (Exception ex) { MessageBox.Show(this, ex.Message, "还原未完成", MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        finally
+        {
+            _restoring = false;
+            if (!IsDisposed) SetDetailButtons(_selectedAsset != null, _selectedAsset?.IsTexture == true);
+        }
+    }
+
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        _moviePreview?.Cancel();
         if (_preview != null)
         {
             var image = _preview.Image;
@@ -2781,7 +3009,14 @@ public class MainForm : Form
 
         try
         {
-            int files = ReplacementZip.Export(_folder, bundles.Select(b => b.BundlePath), dlg.FileName);
+            string root = new[] { _folder, _index?.HotDir }.Where(Directory.Exists)
+                .FirstOrDefault(candidate => bundles.All(asset =>
+                {
+                    string relative = Path.GetRelativePath(candidate, asset.BundlePath);
+                    return !Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar);
+                }));
+            if (root == null) throw new InvalidOperationException("选中的资源分别位于游戏基础目录和热更缓存，请按来源分别导出，以保留可直接覆盖的目录结构。");
+            int files = ReplacementZip.Export(root, bundles.Select(b => b.BundlePath), dlg.FileName);
             _status.Text = $"已导出直接替换 ZIP：{files} 个文件";
             MessageBox.Show($"导出成功，共 {files} 个文件。\n解压到目标设备对应的资源根目录即可覆盖。\n请使用目标手机版本的资源制作 Mod；导出不会转换 PC / 手机资源格式。", "导出成功");
         }
@@ -2821,7 +3056,13 @@ public class MainForm : Form
             return;
         }
 
-        using var selection = new ExportSelectionDialog(_ws.Entries, false);
+        var textures = _ws.Entries.Where(entry => entry.Kind == ResourceKinds.Texture && !NameParser.IsSkillMovie(entry.TextureName)).ToArray();
+        if (textures.Length == 0)
+        {
+            MessageBox.Show(this, "技能特写是视频资源，请使用“导出已改Bundle ZIP”。", "导出视频资源");
+            return;
+        }
+        using var selection = new ExportSelectionDialog(textures, false);
         if (selection.ShowDialog(this) != DialogResult.OK) return;
         using var dlg = new SaveFileDialog { Filter = $"吉星图包|*{PackService.PackExt}", FileName = "我的资源包" + PackService.PackExt };
         if (dlg.ShowDialog() != DialogResult.OK) return;
@@ -2927,6 +3168,9 @@ public class MainForm : Form
 
     private void RestoreAll()
     {
+        if (_restoring) return;
+        try { PortraitReplacement.EnsureGameClosed(); }
+        catch (IOException ex) { MessageBox.Show(this, ex.Message, "还原未完成"); return; }
         if (_folder == null || !Directory.Exists(_backupDir))
         {
             _status.Text = "没有可还原的备份";
@@ -2978,6 +3222,8 @@ public class MainForm : Form
 
     private void ClearDetails()
     {
+        _moviePreview?.Cancel();
+        _previewSeq++;
         _selectedAsset = null;
         _preview.Image?.Dispose();
         _preview.Image = null;

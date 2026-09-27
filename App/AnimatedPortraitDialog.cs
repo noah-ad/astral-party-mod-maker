@@ -34,7 +34,7 @@ public sealed class AnimatedPortraitDialog : Form
         _initialFile = initialFile;
         _targetSize = targetSize ?? new Size(880, 1205);
         if (_targetSize.Width <= 0 || _targetSize.Height <= 0) throw new ArgumentOutOfRangeException(nameof(targetSize));
-        Text = "替换为视频 / GIF";
+        Text = "替换为视频 / GIF - " + AppBuildInfo.ReleaseLabel;
         Font = Theme.UI(9f);
         BackColor = Theme.Bg;
         ForeColor = Theme.Text;
@@ -48,7 +48,12 @@ public sealed class AnimatedPortraitDialog : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.Controls.Add(new Label { Text = texture, AutoSize = true, Padding = new Padding(0, 0, 0, 12) }, 0, 0);
+        var header = new Label
+        {
+            Text = texture + "\n独立视频实验版 · 不占用官方异画",
+            AutoSize = true, Padding = new Padding(0, 0, 0, 12), ForeColor = Theme.Cyan
+        };
+        layout.Controls.Add(header, 0, 0);
         var cropLayout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 2, ColumnCount = 1 };
         cropLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         cropLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -87,7 +92,7 @@ public sealed class AnimatedPortraitDialog : Form
         footer.Controls.AddRange(new Control[] { _cancel, _replace, _choose, _removeGreen, _export, _restore });
         layout.Controls.Add(footer, 0, 3);
         Controls.Add(layout);
-        layout.SizeChanged += (_, _) => _status.MaximumSize = new Size(Math.Max(100, layout.ClientSize.Width - layout.Padding.Horizontal - 8), 0);
+        layout.SizeChanged += (_, _) => _status.MaximumSize = header.MaximumSize = new Size(Math.Max(100, layout.ClientSize.Width - layout.Padding.Horizontal - 8), 0);
         _replace.Enabled = false;
         _replace.BackColor = Theme.Accent;
         _restore.Visible = _export.Visible = false;
@@ -131,16 +136,21 @@ public sealed class AnimatedPortraitDialog : Form
             var area = Screen.FromControl(this).WorkingArea;
             if (Height > area.Height) Height = area.Height;
             if (Width > area.Width) Width = area.Width;
+            var all = PortraitReplacement.ReadReceipt(_root);
+            _restore.Visible = all != null;
             var receipt = PortraitReplacement.ReadReceipt(_root, _texture);
             if (receipt?.Texture == _texture)
             {
                 bool installed = await Task.Run(() => PortraitReplacement.IsInstalled(_root, receipt));
                 if (IsDisposed) return;
-                _restore.Visible = _export.Visible = installed;
+                _export.Visible = installed;
                 _removeGreen.Checked = receipt.RemoveGreen;
                 SetStatus(installed ? "已写入并校验 · " + receipt.SourceName + " · 游戏内效果待确认" : "旧替换记录已失效：资源已更新或被重置");
                 if (installed && File.Exists(receipt.Preview)) { ShowPreview(receipt.Preview); _views.SelectedIndex = 1; }
             }
+            else if (all != null)
+                SetStatus(all.Mode == IndependentVideoPatch.Mode ? $"已有 {all.Portraits?.Count ?? 1} 个独立动态目标 · 当前目标尚未替换"
+                    : "存在旧槽位替换 · 请先恢复原资源，再安装独立视频");
             if (_initialFile != null && !IsDisposed) await PreviewAsync(_initialFile);
         };
     }
@@ -195,12 +205,15 @@ public sealed class AnimatedPortraitDialog : Form
         SetBusy(true);
         try
         {
+            SetStatus("正在检查视频转换组件…");
+            var tools = PortraitVideoSettings.Load();
+            await PortraitVideoConverter.EnsureConversionAvailableAsync(tools, _operation.Token);
             Directory.CreateDirectory(_work);
             if (Path.GetExtension(input).Equals(".usm", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("请拖入原始视频或 GIF，以便校验动态预览。");
             SetStatus("正在读取视频取景…");
             string framePath = Path.Combine(_work, "source.png");
-            await PortraitVideoConverter.SourceFrameAsync(input, framePath, PortraitVideoSettings.Load(), _operation.Token);
+            await PortraitVideoConverter.SourceFrameAsync(input, framePath, tools, _operation.Token);
             using (var frame = Image.FromFile(framePath))
             {
                 _sourceImage?.Dispose();
@@ -245,7 +258,7 @@ public sealed class AnimatedPortraitDialog : Form
     private async Task ReplaceAsync()
     {
         if (_operation != null || !_previewReady) return;
-        if (MessageBox.Show(this, "将使用游戏已有的视频播放器，并占用异画 VHandCard_13021002 的视频槽位。\n原静态贴图不会改动，操作前会备份两个资源包。\n\n继续替换？", "动态立绘替换",
+        if (MessageBox.Show(this, "将生成独立 USM 视频，由游戏原生播放器读取，不替换任何官方异画视频。\n仍需修改热更新程序集，当前为未经游戏内验证的实验方案。原静态贴图不变，写入前自动备份，可还原全部动态替换。\n\n关闭游戏后继续？", "独立动态替换（实验）",
             MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
         _operation = new CancellationTokenSource();
         SetBusy(true);
@@ -254,9 +267,9 @@ public sealed class AnimatedPortraitDialog : Form
             var token = _operation.Token;
             PortraitReplacement.EnsureGameClosed();
             SetStatus("正在定位目标资源…");
-            var found = await Task.Run(() => AnimatedPortraitPatch.FindBundles(_root, token), token);
-            if (found.Runtime == null || found.Video == null)
-                throw new InvalidDataException("缺少热更新程序集或 VHandCard_13021002 视频资源，请先让游戏完成资源下载。");
+            var found = await Task.Run(() => AnimatedPortraitPatch.FindBundles(_root, token, runtimeOnly: true), token);
+            if (found.Runtime == null)
+                throw new InvalidDataException("缺少热更新程序集，请先让游戏完成资源下载。");
             if (!_animationCurrent) await GenerateAnimationAsync(token);
             string usm = await PortraitVideoConverter.ConvertAsync(_lastInput, _work, PortraitVideoSettings.Load(), ConversionOptions(), token,
                 new Progress<string>(message => _status.Text = message));
@@ -265,10 +278,10 @@ public sealed class AnimatedPortraitDialog : Form
             _cancel.Enabled = false;
             SetStatus("正在验证类型结构、备份并写入…");
             bool removeGreen = _removeGreen.Checked;
-            await Task.Run(() => PortraitReplacement.Apply(new(_root, found.Runtime, found.Video, _texture, usm, ""),
+            await Task.Run(() => PortraitReplacement.Apply(new(_root, found.Runtime, null, _texture, usm, "", Independent: true),
                 Path.Combine(_work, "preview.gif"), Path.GetFileName(_lastInput), removeGreen));
             _restore.Visible = _export.Visible = true;
-            SetStatus("已替换原生视频槽位并回读校验 · " + Path.GetFileName(_lastInput) + "\n当前为本地动态预览，游戏内显示待确认。");
+            SetStatus("已写入独立视频并回读校验 · " + Path.GetFileName(_lastInput) + "\n官方异画未改动 · 游戏内效果待确认。");
         }
         catch (OperationCanceledException) { SetStatus("已取消 · 未写入本次视频"); }
         catch (Exception ex) { SetStatus("替换未完成：" + ex.Message); }
@@ -278,7 +291,7 @@ public sealed class AnimatedPortraitDialog : Form
     private async Task RestoreAsync()
     {
         if (_operation != null) return;
-        if (MessageBox.Show(this, "恢复到首次动态替换前的两个资源包？", "恢复原资源", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
+        if (MessageBox.Show(this, "还原全部动态立绘 / 卡牌替换？\n恢复首次备份的程序集，并移除本工具新增的独立视频；旧槽位模式则恢复原来的两个资源包。其他 Mod 不动。", "恢复原资源", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
         _operation = new CancellationTokenSource();
         _writing = true;
         SetBusy(true);

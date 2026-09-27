@@ -23,6 +23,7 @@ public class TexRef
     public int Width;
     public int Height;
     public string Format;
+    public NativeMovieTiming MovieTiming;
     public bool IsSkillAnimation;
     public string OwnerHeroId;
     public string OwnerVariant;
@@ -31,6 +32,8 @@ public class TexRef
     public string Display;   // 显示名 (角色模式用 "半身 01" 等友好标签; null 则用 Name)
     public override string ToString() => $"{Name} ({Width}x{Height})";
     public bool IsTexture => Kind == ResourceKinds.Texture;
+    public bool IsSkillMovie => Kind == ResourceKinds.SkillMovie && NameParser.IsSkillMovie(Name);
+    public bool IsVisual => IsTexture || IsSkillMovie;
 }
 
 /// <summary>
@@ -324,7 +327,7 @@ public class ModEngine
     {
         string backup = ResourceLocator.BackupPath(bundlePath, backupDir, backupName);
         if (!File.Exists(backup)) return false;
-        File.Copy(backup, bundlePath, true);
+        BundleRestore.Apply(BundleRestore.Prepare(bundlePath, backupDir, backupName));
         return true;
     }
 

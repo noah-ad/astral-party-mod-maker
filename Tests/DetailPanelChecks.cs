@@ -25,6 +25,7 @@ internal static class DetailPanelChecks
             void Set(string name, object value) => typeof(MainForm).GetField(name, flags).SetValue(form, value);
             void Call(string method, params object[] arguments) => typeof(MainForm).GetMethod(method, flags).Invoke(form, arguments);
             form.Show();
+            check(form.Text.Contains(AppBuildInfo.ReleaseLabel), "main window identifies the build version and edition");
             form.Scale(new SizeF(scale, scale));
             form.MinimumSize = Size.Empty;
             form.Size = size;
@@ -50,6 +51,17 @@ internal static class DetailPanelChecks
                 Application.DoEvents();
             }
             Select(portrait);
+            var restore = (Button)Field("_restoreResourceBtn");
+            string backup = ResourceLocator.BackupPath(portrait.BundlePath, (string)Field("_backupDir"), portrait.BundleName);
+            Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
+            File.WriteAllText(backup, "fixture backup");
+            Call("UpdateDetailText", portrait);
+            check(restore.Enabled, "new replacement backup enables restore without reselecting the asset");
+            Select(portrait);
+            check(restore.Visible && restore.Enabled && restore.Text == "还原当前资源包", "selected resource has a direct restore action");
+            File.Delete(backup);
+            Select(portrait);
+            check(!restore.Enabled, "restore is disabled when no backup exists");
             var animated = (Button)Field("_replaceAnimationBtn");
             var panel = (Panel)Field("_rightPanel");
             string scenario = $"{size.Width}x{size.Height} at {scale}";
@@ -107,7 +119,7 @@ internal static class DetailPanelChecks
             });
             var replaceTexture = (Button)Field("_replaceTextureBtn");
             var detailHint = (Label)Field("_detailHint");
-            check(animated.Visible && animated.Enabled && animated.Text == "替换技能动画",
+            check(animated.Visible && animated.Enabled && animated.Text == "替换Q版动作",
                 "skill animation action is explicit and reachable: " + scenario);
             check(!replaceTexture.Enabled, "packed skill atlas cannot be replaced as one static image: " + scenario);
             check(detailHint.Text.Contains("原生帧数") && detailHint.Text.Contains("只修改当前资源包"),
@@ -115,6 +127,10 @@ internal static class DetailPanelChecks
             var skillText = TextRenderer.MeasureText(animated.Text, animated.Font);
             check(skillText.Height <= animated.Height && skillText.Width + animated.Padding.Horizontal <= animated.Width,
                 "skill animation button text fits: " + scenario);
+            Select(new TexRef { Name = "VSkill_Hero101_02", Kind = ResourceKinds.SkillMovie });
+            check(animated.Enabled && animated.Text == "替换技能特写" && !replaceTexture.Enabled,
+                "native skill cut-in is a separate video action: " + scenario);
+            check(detailHint.Text.Contains("DLL 不变"), "native skill cut-in does not patch the runtime");
             Select(new TexRef { Name = "UT_Hero_Bust_101", Kind = ResourceKinds.Texture });
             check(animated.Visible && !animated.Enabled, "unsupported bust does not offer a false dynamic replacement");
             foreach (string name in new[]
@@ -134,6 +150,7 @@ internal static class DetailPanelChecks
             check(!animated.Enabled, "audio cannot invoke portrait replacement");
             Call("ClearDetails");
             check(!animated.Enabled, "clearing selection disables portrait replacement");
+            check(!restore.Enabled, "clearing selection disables selective restore");
             form.Close();
             Application.DoEvents();
         }

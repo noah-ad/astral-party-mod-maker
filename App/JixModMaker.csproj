@@ -7,19 +7,24 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <AssemblyName>JixModMaker</AssemblyName>
-    <Version>2.3.0-preview.12</Version>
+    <Version>2.3.0-preview.16</Version>
     <AssemblyVersion>2.3.0.0</AssemblyVersion>
-    <FileVersion>2.3.0.0</FileVersion>
+    <FileVersion>2.3.0.16</FileVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationIcon>Assets\app_icon.ico</ApplicationIcon>
-    <PortableLauncherName>吉星Mod制作器</PortableLauncherName>
     <IncludeVideoRuntime Condition="'$(IncludeVideoRuntime)' == ''">true</IncludeVideoRuntime>
+    <PackageEdition Condition="'$(IncludeVideoRuntime)' == 'true'">full</PackageEdition>
+    <PackageEdition Condition="'$(IncludeVideoRuntime)' != 'true'">core</PackageEdition>
+    <PackageEditionLabel Condition="'$(PackageEdition)' == 'full'">完整视频版</PackageEditionLabel>
+    <PackageEditionLabel Condition="'$(PackageEdition)' == 'core'">核心版</PackageEditionLabel>
+    <PortableLauncherName>吉星Mod制作器-v$(Version)-$(PackageEditionLabel)</PortableLauncherName>
     <!-- 第三方库放在仓库根的 libs/ 下 (见 libs/README.txt 说明来源与协议) -->
     <LibsDir>$(MSBuildProjectDirectory)/../libs</LibsDir>
   </PropertyGroup>
 
   <ItemGroup>
+    <AssemblyMetadata Include="PackageEdition" Value="$(PackageEdition)" />
     <Content Include="Tools/video/mux.py;Tools/video/DEPENDENCIES.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Tools/video/**/*" Exclude="Tools/video/mux.py;Tools/video/DEPENDENCIES.md"
              Condition="'$(IncludeVideoRuntime)' == 'true'" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

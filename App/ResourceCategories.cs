@@ -16,6 +16,10 @@ public static class ResourceKinds
     public const string Text = "TextAsset";
     public const string Mesh = "Mesh";
     public const string Animation = "AnimationClip";
+    public const string SkillMovie = "CriManaUsmAsset";
+
+    public static bool InBrowser(string assetKind, string selectedKind)
+        => assetKind == selectedKind || selectedKind == Texture && assetKind == SkillMovie;
 
     public static readonly (string Id, string Label)[] All =
     {
@@ -26,7 +30,7 @@ public static class ResourceKinds
         (Animation, "动画")
     };
 
-    public static string Label(string kind) => All.FirstOrDefault(x => x.Id == kind).Label ?? kind;
+    public static string Label(string kind) => kind == SkillMovie ? "技能特写视频" : All.FirstOrDefault(x => x.Id == kind).Label ?? kind;
 }
 
 public static class ResourceCategories
@@ -47,7 +51,7 @@ public static class ResourceCategories
         {
             Id = CharacterId,
             Label = "角色 / 皮肤 / 怪物",
-            Description = "角色卡面、细卡、半身、头像、角色照、升级图、技能动画、怪物立绘",
+            Description = "角色卡面、细卡、半身、头像、角色照、升级图、技能特写、Q版动作、怪物立绘",
             Prefixes = new[] { "UT_Hero_", "UT_Item_PlayerPhoto", "UT_Item_StandingPainting" }
         },
         new() { Id = "hand_card", Label = "手牌 / 技能卡", Description = "对局卡面 UT_HandCard", Prefixes = new[] { "UT_HandCard" } },

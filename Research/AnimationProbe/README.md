@@ -1,4 +1,4 @@
-# 动态立绘与原生视频槽位调查
+# 动态立绘与独立视频调查
 
 本目录记录对《吉星派对》Addressables catalog、Unity bundle、热更新程序集和 CRI Mana 视频资源的离线分析。分析器只读输入；可选提取命令写入新文件，不覆盖游戏资源。
 
@@ -17,7 +17,23 @@ CRIWARE 对 `CriManaUsmAsset` 的说明：
 - https://game.criware.jp/manual/unity_plugin_en/latest/contents/classCriWare_1_1Assets_1_1CriManaUsmAsset.html
 - https://game.criware.jp/manual/unity_plugin_en/latest/contents/addon4u_assetsupport_assets_sofdec_playback.html
 
-## 当前实现
+## 当前实现（preview.16）
+
+当前界面使用独立文件实验方案，已不再占用下面历史记录中的官方异画槽位：
+
+1. 每个目标生成单独的 `JixVideos/JixVideo_<贴图名>.usm`，置于平台对应的 `AssetBundles` 缓存根目录。
+2. 角色立绘返回值、手牌 / 事件的 `CardView` 副本映射到独立 key。保留卡牌图层复用和过期回调保护。
+3. 注册的独立 key 不再请求 Addressables；原生图层播放器通过 `SetFile` 读取文件，循环播放。官方 key 保持原来的加载和 `SetAsset` 流程。
+4. 文件缺失或存在 `JixVideos/disabled` 时，下一次绘制保留原静态映射。这个检查不负责捕获所有原生解码失败。
+5. 每次从首次备份的未打补丁 DLL 重新生成全部绑定；可同时绑定多个立绘、手牌、事件。安装失败回滚，恢复时还原原程序集并删除已记录的新增文件。
+
+仍修改热更新程序集，但不新增运行时类型或启动初始化代码，不嵌入视频字节，不修改官方视频包。Windows 真实程序集检查中，其余 65,329 个方法保持不变。369 项回归和真实 Windows 资源副本的多目标安装 / 恢复测试通过；隔离进程中直接文件播放准备到达 `Ready`。Android 与完整游戏内播放仍未验证。
+
+preview.14 起，技能大立绘直接替换 `VSkill_Hero...` / `VSkill_Monster...` 自身的 USM，保持原尺寸、帧率、帧数与非循环设置，不修改 DLL。`Talent*` 图集仅属于 Q 版动作，不能当成技能特写。
+
+发行范围和限制见 [preview.16 更新说明](../../docs/releases/v2.3.0-preview.16.md)。
+
+## 历史实现（preview.12）
 
 preview.12 不再向热更新 DLL 注入独立视频资源，动态立绘、手牌和事件共用一个游戏已有的视频槽位：
 
@@ -30,9 +46,9 @@ preview.12 不再向热更新 DLL 注入独立视频资源，动态立绘、手�
 
 原静态 Texture2D 不会修改。这个方案一次只能绑定一个动态目标，并占用原异画槽位；原游戏其它使用该槽位的位置也可能显示替换后的视频。
 
-技能动画使用另一条独立路径：解析 Addressables catalog，把仍在使用的 `Talent*` 图集归到对应角色 / 皮肤；视频按原生比例裁剪并采样到原帧数后，只重建现有 Sprite 图集像素。AnimationClip、Sprite 元数据、热更新 DLL 和异画槽位都不修改。
+当时标为“技能动画”的另一条路径实际上是 Q 版动作：解析 Addressables catalog，把仍在使用的 `Talent*` 图集归到对应角色 / 皮肤；视频按原生比例裁剪并采样到原帧数后，只重建现有 Sprite 图集像素。AnimationClip、Sprite 元数据、热更新 DLL 和异画槽位都不修改。新版已纠正名称。
 
-## 封包保护
+## 历史槽位封包保护
 
 - 修改前要求程序集包与视频包属于同一平台和同一资源根目录。
 - 只接受 Windows 64 位平台 19 与 Android 平台 13。
@@ -57,7 +73,7 @@ preview.12 不再向热更新 DLL 注入独立视频资源，动态立绘、手�
 
 本机 CRI 原生库在隔离进程中可识别测试 USM 的 397 帧、30 FPS 和一个透明流，并完成解码准备到 `Ready`。这不等同于完整游戏 UI 渲染。
 
-## 验证范围
+## 历史槽位验证范围
 
 PC 与 Android 的真实资源副本均通过：
 

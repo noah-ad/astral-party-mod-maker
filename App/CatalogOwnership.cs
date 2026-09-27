@@ -14,7 +14,9 @@ public sealed class CharacterAssetOwner
 
 public static class CatalogOwnership
 {
-    private const int OwnershipCacheVersion = 1;
+    private const int OwnershipCacheVersion = 2;
+    private static readonly Dictionary<string, OwnershipCache> MemoryCache = new(StringComparer.OrdinalIgnoreCase);
+    public sealed record SkillMovieEntry(string Name, string Bundle);
     private static readonly Regex BundleName = new(@"(?<name>[0-9a-f]{32}\.bundle)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex HeroKey = new(@"^Hero(?<id>\d+)(?:_(?<skin>\d+|Max))?_PC$",
@@ -31,6 +33,7 @@ public static class CatalogOwnership
         public long CatalogLength { get; set; }
         public long CatalogWriteUtcTicks { get; set; }
         public Dictionary<string, CharacterAssetOwner> Owners { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<SkillMovieEntry> Movies { get; set; } = new();
     }
 
     public static Dictionary<string, CharacterAssetOwner> Load(string gameDir, IEnumerable<string> bundleNames)
@@ -46,7 +49,7 @@ public static class CatalogOwnership
         {
             try
             {
-                var owners = LoadAll(catalog);
+                var owners = LoadAll(catalog).Owners;
                 foreach (string bundle in wanted)
                     if (owners.TryGetValue(bundle, out var owner) &&
                         (!result.TryGetValue(bundle, out var old) || OwnerRank(owner) > OwnerRank(old)))
@@ -55,6 +58,20 @@ public static class CatalogOwnership
             catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException or FormatException) { }
         }
         return result;
+    }
+
+    public static IReadOnlyList<SkillMovieEntry> LoadSkillMovies(string gameDir, bool includeHotCache)
+    {
+        var result = new Dictionary<string, SkillMovieEntry>(StringComparer.Ordinal);
+        foreach (string path in CatalogCandidates(gameDir, includeHotCache))
+        {
+            try
+            {
+                foreach (var movie in LoadAll(path).Movies) result.TryAdd(movie.Name, movie);
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or InvalidDataException or FormatException) { }
+        }
+        return result.Values.ToArray();
     }
 
     public static CharacterAssetOwner ParseOwnerKey(string key)
@@ -79,45 +96,50 @@ public static class CatalogOwnership
         return null;
     }
 
-    private static Dictionary<string, CharacterAssetOwner> LoadAll(string path)
+    private static OwnershipCache LoadAll(string path)
     {
         var catalog = new FileInfo(path);
         string fullPath = catalog.FullName;
+        bool Current(OwnershipCache cache) => cache?.Version == OwnershipCacheVersion &&
+            string.Equals(cache.CatalogPath, fullPath, StringComparison.OrdinalIgnoreCase) &&
+            cache.CatalogLength == catalog.Length && cache.CatalogWriteUtcTicks == catalog.LastWriteTimeUtc.Ticks;
+        lock (MemoryCache)
+            if (MemoryCache.TryGetValue(fullPath, out var memory) && Current(memory)) return memory;
         try
         {
             string cachePath = CachePath();
             if (File.Exists(cachePath))
             {
                 var cache = JsonSerializer.Deserialize<OwnershipCache>(File.ReadAllText(cachePath));
-                if (cache?.Version == OwnershipCacheVersion &&
-                    string.Equals(cache.CatalogPath, fullPath, StringComparison.OrdinalIgnoreCase) &&
-                    cache.CatalogLength == catalog.Length &&
-                    cache.CatalogWriteUtcTicks == catalog.LastWriteTimeUtc.Ticks &&
-                    cache.Owners?.Count > 0)
-                    return new Dictionary<string, CharacterAssetOwner>(cache.Owners, StringComparer.OrdinalIgnoreCase);
+                if (Current(cache))
+                {
+                    cache.Owners = new(cache.Owners, StringComparer.OrdinalIgnoreCase);
+                    lock (MemoryCache) MemoryCache[fullPath] = cache;
+                    return cache;
+                }
             }
         }
         catch { }
 
-        var owners = Parse(path);
+        var parsed = Parse(path);
+        var updated = new OwnershipCache
+        {
+            Version = OwnershipCacheVersion, CatalogPath = fullPath,
+            CatalogLength = catalog.Length, CatalogWriteUtcTicks = catalog.LastWriteTimeUtc.Ticks,
+            Owners = parsed.Owners, Movies = parsed.Movies
+        };
+        lock (MemoryCache) MemoryCache[fullPath] = updated;
         try
         {
             string cachePath = CachePath();
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
-            File.WriteAllText(cachePath, JsonSerializer.Serialize(new OwnershipCache
-            {
-                Version = OwnershipCacheVersion,
-                CatalogPath = fullPath,
-                CatalogLength = catalog.Length,
-                CatalogWriteUtcTicks = catalog.LastWriteTimeUtc.Ticks,
-                Owners = owners
-            }));
+            File.WriteAllText(cachePath, JsonSerializer.Serialize(updated));
         }
         catch { }
-        return owners;
+        return updated;
     }
 
-    private static Dictionary<string, CharacterAssetOwner> Parse(string path)
+    private static OwnershipCache Parse(string path)
     {
         using var document = JsonDocument.Parse(File.ReadAllText(path));
         var root = document.RootElement;
@@ -195,7 +217,25 @@ public static class CatalogOwnership
                     owners[bundle] = owner;
             }
         }
-        return owners;
+        var movies = new List<SkillMovieEntry>();
+        var types = root.GetProperty("m_resourceTypes");
+        foreach (var bucket in buckets.Where(bucket => NameParser.IsSkillMovie(bucket.Key)))
+        {
+            if (bucket.Entries.Length != 1) continue;
+            int id = bucket.Entries[0];
+            if (id < 0 || id >= entryCount) continue;
+            int typeId = ReadInt(entryData, 4 + id * 28 + 24);
+            if (typeId < 0 || typeId >= types.GetArrayLength() ||
+                types[typeId].GetProperty("m_ClassName").GetString() != "CriWare.Assets.CriManaUsmAsset") continue;
+            int dependency = dependencies[id];
+            if (dependency < 0 || dependency >= buckets.Count) continue;
+            // Addressables lists the containing bundle before its shared dependencies.
+            // The exact movie name and CRI payload are checked again before preview/write.
+            int primary = buckets[dependency].Entries.FirstOrDefault(-1);
+            if (direct.TryGetValue(primary, out var bundles) && bundles.Count == 1)
+                movies.Add(new(bucket.Key, bundles.Single()));
+        }
+        return new OwnershipCache { Owners = owners, Movies = movies };
     }
 
     private static int OwnerRank(CharacterAssetOwner owner) => owner.CatalogKey.StartsWith("Hero", StringComparison.OrdinalIgnoreCase) ? 3
@@ -220,10 +260,10 @@ public static class CatalogOwnership
         };
     }
 
-    private static IEnumerable<string> CatalogCandidates(string gameDir)
+    private static IEnumerable<string> CatalogCandidates(string gameDir, bool includeHotCache = true)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var hotParent = Directory.GetParent(IndexService.HotCacheDir())?.FullName;
+        var hotParent = includeHotCache ? Directory.GetParent(IndexService.HotCacheDir())?.FullName : null;
         foreach (var root in new[] { hotParent, gameDir, Directory.GetParent(gameDir ?? "")?.FullName })
         {
             if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) continue;

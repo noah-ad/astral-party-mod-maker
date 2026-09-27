@@ -56,7 +56,7 @@ public class GameIndex
     public Dictionary<string, CharacterAssetOwner> CharacterOwnersByBundle { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public List<TexIndexEntry> Items { get; set; } = new();
 
-    public int AssetCount => Lightweight ? LightweightTextureCount : Items.Count;
+    public int AssetCount => Lightweight ? LightweightTextureCount + Items.Count : Items.Count;
 
     public int BundleCount => Lightweight
         ? TextureNamesByBundle?.Count ?? 0
@@ -65,8 +65,8 @@ public class GameIndex
     public int CountKind(string kind)
     {
         if (Lightweight)
-            return kind == ResourceKinds.Texture ? LightweightTextureCount : 0;
-        return Items.Count(i => i.Kind == kind);
+            return kind == ResourceKinds.Texture ? LightweightTextureCount + Items.Count(i => i.Kind == ResourceKinds.SkillMovie) : 0;
+        return Items.Count(i => ResourceKinds.InBrowser(i.Kind, kind));
     }
 
     public void AddTextureCategoryCount(string categoryId)
@@ -190,11 +190,15 @@ public class GameIndex
     public TexIndexEntry FindTextureTarget(string bundleName, string textureName, long pathId = 0)
     {
         if (string.IsNullOrWhiteSpace(bundleName)) return null;
+        var movie = Items.FirstOrDefault(i => i.Kind == ResourceKinds.SkillMovie &&
+            string.Equals(i.Bundle, bundleName, StringComparison.OrdinalIgnoreCase) &&
+            (pathId != 0 ? i.PathId == pathId || i.PathId == 0 && i.Name == textureName : i.Name == textureName));
+        if (movie != null) return movie;
 
         if (!Lightweight)
             return Items.FirstOrDefault(i =>
                 string.Equals(i.Bundle, bundleName, StringComparison.OrdinalIgnoreCase)
-                && (pathId > 0 && i.PathId == pathId
+                && (pathId != 0 && i.PathId == pathId
                     || pathId == 0 && string.Equals(i.Name, textureName, StringComparison.Ordinal)));
 
         if (TextureNamesByBundle == null
@@ -266,7 +270,7 @@ public class IndexService
         foreach (var b in bundles)
         {
             string stamp = $"{b.Path}|{b.Length}|{b.LastWriteTicks}";
-            if (!includeAdvancedTypes && previous?.BundleStamps?.GetValueOrDefault(b.Name) == stamp)
+            if (!includeAdvancedTypes && string.Equals(previous?.BundleStamps?.GetValueOrDefault(b.Name), stamp, StringComparison.OrdinalIgnoreCase))
             {
                 if (oldRows.TryGetValue(b.Name, out var reused)) idx.Items.AddRange(reused);
                 idx.BundleStamps[b.Name] = stamp;
@@ -467,7 +471,7 @@ public class IndexService
 
     private static void AppendDirectory(StringBuilder text, string label, string path)
     {
-        text.Append(label).Append('|').Append(path ?? "").Append('|');
+        text.Append(label).Append('|').Append((path ?? "").ToLowerInvariant()).Append('|');
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
         {
             text.Append("missing\n");
@@ -481,7 +485,7 @@ public class IndexService
     {
         var sb = new StringBuilder();
         foreach (var b in bundles.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase))
-            sb.Append(b.Name).Append('|').Append(b.Path).Append('|').Append(b.Length).Append('|').Append(b.LastWriteTicks).Append('\n');
+            sb.Append(b.Name.ToLowerInvariant()).Append('|').Append(b.Path.ToLowerInvariant()).Append('|').Append(b.Length).Append('|').Append(b.LastWriteTicks).Append('\n');
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
     }
 
@@ -662,6 +666,7 @@ public class IndexService
 
     private static void ApplySkillOwnership(GameIndex idx)
     {
+        AddSkillMovies(idx);
         IEnumerable<string> bundleNames = idx.Lightweight
             ? idx.TextureNamesByBundle?.Keys ?? Enumerable.Empty<string>()
             : idx.Items?.Select(item => item.Bundle).Distinct(StringComparer.OrdinalIgnoreCase) ?? Enumerable.Empty<string>();
@@ -688,12 +693,14 @@ public class IndexService
                 if (ShouldStoreLightweightCategoryRef(entry.CategoryId))
                     idx.AddTextureCategoryRef(entry.CategoryId, pair.Key, name, entry);
             }
+            foreach (var movie in idx.Items.Where(item => item.Kind == ResourceKinds.SkillMovie))
+                idx.AddTextureCategoryCount(movie.CategoryId);
             return;
         }
 
         foreach (var entry in idx.Items ?? new List<TexIndexEntry>())
         {
-            if (entry.Kind != ResourceKinds.Texture) continue;
+            if (!ResourceKinds.InBrowser(entry.Kind, ResourceKinds.Texture)) continue;
             if (entry.IsSkillAnimation)
             {
                 entry.IsSkillAnimation = false;
@@ -705,6 +712,34 @@ public class IndexService
             }
             idx.ApplyCharacterOwnership(entry);
             idx.AddTextureCategoryCount(entry.CategoryId);
+        }
+    }
+
+    private static void AddSkillMovies(GameIndex idx)
+    {
+        idx.Items.RemoveAll(item => item.Kind == ResourceKinds.SkillMovie);
+        var paths = new Dictionary<string, string>(idx.BundlePathsByName, StringComparer.OrdinalIgnoreCase);
+        foreach (var stamp in idx.BundleStamps)
+        {
+            int separator = stamp.Value.IndexOf('|');
+            if (separator <= 0) continue;
+            string path = stamp.Value[..separator];
+            string logical = Path.GetFileName(path) == "__data"
+                ? Path.GetFileName(Path.GetDirectoryName(path)) + ".bundle" : Path.GetFileName(stamp.Key);
+            paths[logical] = path;
+        }
+        foreach (var movie in CatalogOwnership.LoadSkillMovies(idx.GameDir, idx.IncludeHotCache))
+        {
+            string path = paths.GetValueOrDefault(movie.Bundle) ?? Path.Combine(idx.GameDir, movie.Bundle);
+            if (!File.Exists(path)) continue;
+            idx.Items.Add(new TexIndexEntry
+            {
+                Bundle = movie.Bundle, BundlePath = path, Name = movie.Name,
+                Kind = ResourceKinds.SkillMovie, Format = "USM / 点选解析",
+                CategoryId = ResourceCategories.CharacterId,
+                CategoryLabel = ResourceCategories.Label(ResourceKinds.Texture, ResourceCategories.CharacterId),
+                Source = ResourceLocator.IsWrappedData(path) ? "热更缓存" : "基础包"
+            });
         }
     }
 }

@@ -6,13 +6,13 @@ namespace JixModMaker;
 
 public static class PortraitReplacement
 {
-    public const string SafetyNotice = "使用游戏原生视频槽位；替换前请关闭游戏。";
+    public const string SafetyNotice = "独立视频实验版；替换前请关闭游戏，保留还原备份。";
     public sealed record PortraitEntry(string VideoKey, string SourceName, bool RemoveGreen, DateTimeOffset InstalledAt, string Preview);
     public sealed record Receipt(string Texture, string VideoKey, string SourceName, bool RemoveGreen, DateTimeOffset InstalledAt,
         string Preview, string ReplacementZip, string RestoreZip, string BaselineRestoreZip, Dictionary<string, string> Hashes,
-        Dictionary<string, PortraitEntry> Portraits = null);
-    private static string HistoryRoot(string root) => Path.Combine(Path.GetFullPath(root), "_原始备份", "动态立绘");
-    private static string StatePath(string root) => Path.Combine(HistoryRoot(root), "current.json");
+        Dictionary<string, PortraitEntry> Portraits = null, string Mode = null, Dictionary<string, string> BaselineHashes = null);
+    internal static string HistoryRoot(string root) => Path.Combine(Path.GetFullPath(root), "_原始备份", "动态立绘");
+    internal static string StatePath(string root) => Path.Combine(HistoryRoot(root), "current.json");
     private static bool IsCacheInfo(string path) => Path.GetFileName(path) == "__info";
 
     public static Receipt ReadReceipt(string root, string texture = null)
@@ -43,8 +43,11 @@ public static class PortraitReplacement
 
     public static Receipt Apply(AnimatedPortraitPatch.Request request, string preview = null, string sourceName = "", bool removeGreen = false)
     {
+        if (request.Independent) return IndependentVideoReplacement.Apply(request, preview, sourceName, removeGreen);
         EnsureGameClosed();
         var previous = ReadReceipt(request.Root);
+        if (previous?.Mode == IndependentVideoPatch.Mode)
+            throw new IOException("请先还原独立动态替换，再使用旧槽位模式。");
         if (previous != null && !IsInstalled(request.Root, previous))
         {
             if (ArchiveMatches(request.Root, previous.BaselineRestoreZip)) previous = null;
@@ -94,6 +97,15 @@ public static class PortraitReplacement
     {
         EnsureGameClosed();
         var receipt = ReadReceipt(root) ?? throw new IOException("没有动态替换记录");
+        if (receipt.Mode == IndependentVideoPatch.Mode)
+        {
+            IndependentVideoReplacement.VerifyBaseline(receipt);
+            IndependentVideoTransaction.Apply(root, receipt.BaselineRestoreZip, receipt.ReplacementZip, restoreMissingVideos: true);
+            if (!IndependentVideoTransaction.Matches(root, receipt.BaselineRestoreZip))
+                throw new IOException("独立视频恢复校验失败，请保留备份。");
+            File.Delete(StatePath(root));
+            return;
+        }
         if (!IsInstalled(root, receipt)) throw new IOException("游戏资源已改变，停止恢复，避免覆盖游戏更新或其他 Mod。");
         Install(root, receipt.BaselineRestoreZip, receipt.ReplacementZip);
         if (!ArchiveMatches(root, receipt.BaselineRestoreZip)) throw new IOException("恢复后的资源校验失败，请保留备份。");
@@ -117,7 +129,8 @@ public static class PortraitReplacement
 
     public static void EnsureGameClosed()
     {
-        var games = System.Diagnostics.Process.GetProcessesByName("AstralParty_CN");
+        var games = new[] { "AstralParty_CN", "AstralParty" }
+            .SelectMany(System.Diagnostics.Process.GetProcessesByName).ToArray();
         bool running = games.Length > 0;
         foreach (var game in games) game.Dispose();
         if (running) throw new IOException("请先关闭游戏，再执行替换或恢复。");

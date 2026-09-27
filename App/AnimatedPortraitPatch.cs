@@ -18,7 +18,8 @@ public static class AnimatedPortraitPatch
     private const string GraphPrepareHelperName = "JixPrepareCardGraph";
     private const string GraphAttachHelperName = "JixCanAttachCardGraph";
 
-    public sealed record Request(string Root, string RuntimeBundle, string VideoBundle, string TextureName, string UsmFile, string Destination);
+    public sealed record Request(string Root, string RuntimeBundle, string VideoBundle, string TextureName, string UsmFile, string Destination,
+        bool Independent = false);
     public sealed record Result(string ReplacementZip, string RestoreZip, string VideoKey, string Platform);
 
     public static bool IsCharacterPortrait(string name) => name != null &&
@@ -70,7 +71,7 @@ public static class AnimatedPortraitPatch
         return output.ToArray();
     }
 
-    private static void PatchCharacterPortrait(ModuleDefinition module, string texture, string videoKey)
+    internal static void PatchCharacterPortrait(ModuleDefinition module, string texture, string videoKey, MethodReference lookup = null)
     {
 
         var config = module.Types.SingleOrDefault(t => t.FullName == "SkinStandingPaintingConfigureItem") ??
@@ -99,11 +100,26 @@ public static class AnimatedPortraitPatch
         config.Methods.Add(map);
         var il = map.Body.GetILProcessor();
         var unchanged = Instruction.Create(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldstr, texture);
-        il.Emit(OpCodes.Call, equality);
-        il.Emit(OpCodes.Brfalse, unchanged);
-        il.Emit(OpCodes.Ldstr, videoKey);
+        if (lookup == null)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, texture);
+            il.Emit(OpCodes.Call, equality);
+            il.Emit(OpCodes.Brfalse, unchanged);
+            il.Emit(OpCodes.Ldstr, videoKey);
+        }
+        else
+        {
+            map.Body.InitLocals = true;
+            var mapped = new VariableDefinition(module.TypeSystem.String);
+            map.Body.Variables.Add(mapped);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, lookup);
+            il.Emit(OpCodes.Stloc, mapped);
+            il.Emit(OpCodes.Ldloc, mapped);
+            il.Emit(OpCodes.Brfalse, unchanged);
+            il.Emit(OpCodes.Ldloc, mapped);
+        }
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Newobj, tupleConstructor);
         il.Emit(OpCodes.Ret);
@@ -118,7 +134,8 @@ public static class AnimatedPortraitPatch
         }
     }
 
-    private static void PatchCardArtwork(ModuleDefinition module, string texture, string videoKey)
+    internal static void PatchCardArtwork(ModuleDefinition module, string texture, string videoKey,
+        MethodReference lookup = null, MethodReference isIndependent = null)
     {
         TypeDefinition RequireType(string fullName) => module.GetType(fullName) ??
             throw new InvalidOperationException("没有找到 " + fullName + "，游戏版本不兼容");
@@ -183,6 +200,8 @@ public static class AnimatedPortraitPatch
         map.Body.InitLocals = true;
         var clone = new VariableDefinition(card);
         map.Body.Variables.Add(clone);
+        var mappedKey = new VariableDefinition(module.TypeSystem.String);
+        map.Body.Variables.Add(mappedKey);
         common.Methods.Add(map);
         var il = map.Body.GetILProcessor();
         var unchanged = Instruction.Create(OpCodes.Ldarg_0);
@@ -193,8 +212,17 @@ public static class AnimatedPortraitPatch
         il.Emit(OpCodes.Brtrue, unchanged);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, keyField);
-        il.Emit(OpCodes.Ldstr, texture);
-        il.Emit(OpCodes.Call, equality);
+        if (lookup == null)
+        {
+            il.Emit(OpCodes.Ldstr, texture);
+            il.Emit(OpCodes.Call, equality);
+        }
+        else
+        {
+            il.Emit(OpCodes.Call, lookup);
+            il.Emit(OpCodes.Stloc, mappedKey);
+            il.Emit(OpCodes.Ldloc, mappedKey);
+        }
         il.Emit(OpCodes.Brfalse, unchanged);
         il.Emit(OpCodes.Newobj, cardConstructor);
         il.Emit(OpCodes.Stloc, clone);
@@ -206,7 +234,8 @@ public static class AnimatedPortraitPatch
             il.Emit(OpCodes.Stfld, field);
         }
         il.Emit(OpCodes.Ldloc, clone);
-        il.Emit(OpCodes.Ldstr, videoKey);
+        if (lookup == null) il.Emit(OpCodes.Ldstr, videoKey);
+        else il.Emit(OpCodes.Ldloc, mappedKey);
         il.Emit(OpCodes.Stfld, keyField);
         il.Emit(OpCodes.Ldloc, clone);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -232,8 +261,12 @@ public static class AnimatedPortraitPatch
         il.Emit(OpCodes.Brfalse, originalLayer);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, keyField);
-        il.Emit(OpCodes.Ldstr, videoKey);
-        il.Emit(OpCodes.Call, equality);
+        if (isIndependent == null)
+        {
+            il.Emit(OpCodes.Ldstr, videoKey);
+            il.Emit(OpCodes.Call, equality);
+        }
+        else il.Emit(OpCodes.Call, isIndependent);
         il.Emit(OpCodes.Brfalse, originalLayer);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
@@ -430,7 +463,7 @@ public static class AnimatedPortraitPatch
     }
 
     public static (string Runtime, string Video) FindBundles(string root, CancellationToken cancellationToken,
-        IProgress<int> progress = null)
+        IProgress<int> progress = null, bool runtimeOnly = false)
     {
         string runtime = null;
         string video = null;
@@ -467,7 +500,7 @@ public static class AnimatedPortraitPatch
                 catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException) { }
                 finally { manager.UnloadAll(); }
                 if (++scanned % 25 == 0) progress?.Report(scanned);
-                if (runtime != null && video != null) break;
+                if (runtime != null && (runtimeOnly || video != null)) break;
             }
             return (runtime, video);
         }
@@ -476,6 +509,7 @@ public static class AnimatedPortraitPatch
 
     public static Result Export(Request request)
     {
+        if (request.Independent) throw new InvalidOperationException("独立视频必须使用独立文件导出流程，不能写入旧异画槽位。");
         if (!IsSupportedTarget(request.TextureName)) throw new ArgumentException("动态替换仅支持角色立绘、手牌和事件卡");
         string root = Path.GetFullPath(request.Root);
         string runtimeRelative = Relative(request.RuntimeBundle);
@@ -604,7 +638,7 @@ public static class AnimatedPortraitPatch
         }
     }
 
-    private static void RejectMalformedTypeTree(AssetsFile file)
+    internal static void RejectMalformedTypeTree(AssetsFile file)
     {
         if (file.Metadata.TypeTreeEnabled && file.Metadata.TypeTreeTypes.Any(type =>
                 type.TypeId == (int)AssetClassID.TextAsset && type.Nodes.Count == 0))
@@ -671,7 +705,7 @@ public static class AnimatedPortraitPatch
         finally { manager.UnloadAll(); }
     }
 
-    private sealed class BundleAssemblyResolver : DefaultAssemblyResolver
+    internal sealed class BundleAssemblyResolver : DefaultAssemblyResolver
     {
         private readonly IReadOnlyDictionary<string, byte[]> _dependencies;
         private readonly Dictionary<string, AssemblyDefinition> _loaded = new(StringComparer.OrdinalIgnoreCase);
@@ -695,7 +729,7 @@ public static class AnimatedPortraitPatch
         }
     }
 
-    private static AssetsManager Manager()
+    internal static AssetsManager Manager()
     {
         var manager = new AssetsManager();
         manager.LoadClassPackage(Path.Combine(AppContext.BaseDirectory, "classdata.tpk"));
@@ -728,7 +762,7 @@ public static class AnimatedPortraitPatch
         finally { manager.UnloadAll(); }
     }
 
-    private static string Rewrite(string source, string destination, Func<AssetsManager, AssetsFileInstance, AssetsReplacer> change)
+    internal static string Rewrite(string source, string destination, Func<AssetsManager, AssetsFileInstance, AssetsReplacer> change)
     {
         var manager = Manager();
         try

@@ -10,6 +10,7 @@ public class ModEntry
     public string Bundle { get; set; }       // bundle 文件名 (v1 定位用; v2 可空)
     public long PathId { get; set; }          // Texture2D 的 PathID (v1)
     public string TextureName { get; set; }   // 贴图名 (v2 主键, 跨版本稳定)
+    public string Kind { get; set; } = ResourceKinds.Texture;
     public int Width { get; set; }
     public int Height { get; set; }
     public string Label { get; set; }          // 备注/角色名 (可选)
@@ -87,7 +88,7 @@ public static class PackService
         if (ws?.Entries == null) return false;
         return ws.Entries.Any(e =>
             string.Equals(e.Bundle, bundleName, StringComparison.OrdinalIgnoreCase)
-            && (pathId > 0 && e.PathId == pathId
+            && (pathId != 0 && e.PathId == pathId
                 || pathId == 0 && !string.IsNullOrWhiteSpace(textureName)
                 && string.Equals(e.TextureName, textureName, StringComparison.Ordinal)));
     }

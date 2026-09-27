@@ -10,6 +10,76 @@ if (args.Length == 4 && args[0] == "--decode-texture")
     File.WriteAllBytes(args[3], new ModEngine().DecodePng(args[1], long.Parse(args[2])));
     return;
 }
+if (args.Length == 1 && args[0] == "--independent-unit")
+{
+    IndependentVideoChecks.Run(Check);
+    return;
+}
+if (args.Length == 3 && args[0] == "--independent-dll")
+{
+    IndependentVideoChecks.RealAssembly(args[1], args[2], Check);
+    return;
+}
+if (args.Length == 5 && args[0] == "--independent-smoke")
+{
+    IndependentVideoChecks.PackageSmoke(args[1], args[2], args[3], args[4], Check);
+    return;
+}
+if (args.Length is 4 or 5 && args[0] == "--skill-movie-smoke")
+{
+    if (args.Length == 5) AppContext.SetData("APP_CONTEXT_BASE_DIRECTORY", Path.GetFullPath(args[4]) + Path.DirectorySeparatorChar);
+    SkillMovieChecks.SmokeAsync(args[1], args[2], args[3], Check).GetAwaiter().GetResult();
+    return;
+}
+if (args.Length == 3 && args[0] == "--movie-browser-ui")
+{
+    SkillMovieChecks.BrowserUi(args[1], args[2], Check);
+    return;
+}
+if (args.Length == 2 && args[0] == "--verify-movie-targets")
+{
+    var index = new IndexService().Load(args[1], false, true, false) ?? throw new Exception("Missing current index");
+    int count = 0;
+    foreach (var movie in index.Items.Where(item => item.Kind == ResourceKinds.SkillMovie))
+    {
+        var native = SkillMovieEngine.Read(movie.BundlePath, movie.Name);
+        if (native.Bytes.Length < 4) throw new Exception("Invalid movie: " + movie.Name);
+        count++;
+    }
+    Check(count > 0, $"all {count} catalog targets resolve to their exact embedded native skill movie");
+    return;
+}
+if (args.Length == 2 && args[0] == "--index-movies")
+{
+    var timer = System.Diagnostics.Stopwatch.StartNew();
+    var service = new IndexService();
+    var index = service.Load(args[1], heroOnly: false, includeHotCache: true, recursive: false);
+    if (index == null)
+    {
+        Console.WriteLine("Index changed since last scan; building incrementally once");
+        index = service.Build(args[1], heroOnly: false, includeHotCache: true, recursive: false);
+        service.Save(index);
+        timer.Restart();
+        index = service.Load(args[1], heroOnly: false, includeHotCache: true, recursive: false)
+            ?? throw new Exception("Fresh index could not be reused");
+    }
+    var movies = index.Items.Where(item => item.Kind == ResourceKinds.SkillMovie).ToArray();
+    Check(movies.Any(item => item.Name == "VSkill_Hero101" && item.Bundle == "40f1221a59df2a9e7a9a68d11f5676d6.bundle"),
+        "real cached index adds correct native Hero101 cut-in without bundle rescan");
+    Check(movies.All(item => NameParser.Parse(item.Name).IsHero && item.CategoryId == ResourceCategories.CharacterId),
+        "native movies share character and skin grouping");
+    Console.WriteLine($"INDEX {movies.Length} movies, {timer.ElapsedMilliseconds} ms");
+    return;
+}
+if (args.Length == 2 && args[0] == "--index-plan")
+{
+    var index = System.Text.Json.JsonSerializer.Deserialize<GameIndex>(File.ReadAllText(IndexService.CachePath(args[1], false, true, false)));
+    var entries = IndexService.EnumerateBundles(args[1], true, false);
+    var changed = entries.Where(b => !string.Equals(index.BundleStamps.GetValueOrDefault(b.Name), $"{b.Path}|{b.Length}|{b.LastWriteTicks}", StringComparison.OrdinalIgnoreCase)).ToArray();
+    Console.WriteLine($"CURRENT {entries.Count}, PREVIOUS {index.BundleStamps.Count}, CHANGED {changed.Length}");
+    foreach (var entry in changed.Take(12)) Console.WriteLine(entry.Name + " " + entry.Path);
+    return;
+}
 if (args.Length == 4 && args[0] == "--patch-card-dll")
 {
     var original = File.ReadAllBytes(args[1]);
@@ -273,6 +343,8 @@ if (args.Length == 5 && args[0] == "--animation-install-smoke")
 }
 
 Check(NameParser.Parse("UT_Hero_Card_135_06_0").Skin == "皮肤06", "new hero and skin 06");
+SkillMovieChecks.Run(Check);
+IndependentVideoChecks.Run(Check);
 Check(NameParser.Parse("UT_Hero_Card_135").Skin == "原皮", "base skin label");
 var groupedSkill = NameParser.Parse("Talent-001", "115", "02", true, false);
 Check(groupedSkill.GroupKey == "角色 115" && groupedSkill.Skin == "皮肤02" && groupedSkill.Kind == "SkillAnimation",
@@ -295,6 +367,7 @@ if (args.Length == 3 && args[0] == "--reject-type-layout")
     catch (InvalidDataException) { Console.WriteLine("PASS old malformed TextAsset type table rejected"); }
     return;
 }
+VideoRuntimeChecks.Run(Check);
 var patchedAssembly = AnimatedPortraitPatch.PatchAssembly(originalAssembly, "UT_Hero_Card_101", AnimatedPortraitPatch.VideoSlot);
 Check(patchedAssembly.SequenceEqual(AnimatedPortraitPatch.PatchAssembly(patchedAssembly, "UT_Hero_Card_101", AnimatedPortraitPatch.VideoSlot)),
     "repeating the same native-slot mapping does not stack patches");
@@ -379,6 +452,7 @@ Check(workspace.Entries.Single().ModifiedAt >= now, "replacement gets timestamp"
 
 var root = Path.Combine(AppContext.BaseDirectory, "fixtures-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
+RestoreChecks.Run(root, Check);
 var installRoot = Path.Combine(root, "install");
 Directory.CreateDirectory(installRoot);
 var target = Path.Combine(installRoot, "resource.bundle");
@@ -446,6 +520,11 @@ if (args.Length == 2 && args[0] == "--video-test")
     using (var bitmap = new System.Drawing.Bitmap(keyed)) Check(bitmap.GetPixel(8, 8).A == 0, "GIF input keyed");
     var mp4 = Path.Combine(root, "green video.mp4");
     PortraitVideoConverter.RunAsync(args[1], new[] { "-nostdin", "-v", "error", "-y", "-i", gif, "-vf", "scale=out_color_matrix=bt709", "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-c:v", "libx264", "-pix_fmt", "yuv420p", mp4 }, CancellationToken.None).GetAwaiter().GetResult();
+    foreach (string media in new[] { gif, mp4 })
+    {
+        var duration = PortraitVideoConverter.ProbeDurationAsync(media, tools, CancellationToken.None).GetAwaiter().GetResult();
+        Check(duration.HasValue && Math.Abs(duration.Value - .5) < .05, "input duration detected without full conversion: " + Path.GetExtension(media));
+    }
     PortraitVideoConverter.PreviewAsync(mp4, keyed, tools, new(true), CancellationToken.None).GetAwaiter().GetResult();
     using (var bitmap = new System.Drawing.Bitmap(keyed)) Check(bitmap.GetPixel(8, 8).A == 0, "MP4 input keyed");
     var avi = Path.Combine(root, "alpha.avi");
@@ -538,6 +617,17 @@ if (args.Length == 2 && args[0] == "--video-test")
     catch (OperationCanceledException) { Console.WriteLine("PASS conversion cancellation"); }
 }
 var first = IndexService.ComputeSourceStamp(root, false, false);
+Check(first == IndexService.ComputeSourceStamp(root.ToUpperInvariant(), false, false), "Windows path case does not change bundle fingerprints");
+Check(IndexService.ComputeQuickSourceStamp(root, false, false) == IndexService.ComputeQuickSourceStamp(root.ToUpperInvariant(), false, false),
+    "Windows path case does not invalidate fast startup cache");
+string parentBypass = Environment.GetEnvironmentVariable("NO_PROXY");
+var gameStart = GameStartup.SteamStart();
+Check(gameStart.UseShellExecute && gameStart.FileName == "steam://rungameid/2622000",
+    "game launch uses the Steam client instead of starting the game outside Steam");
+Check(gameStart.Arguments.Length == 0 && gameStart.WorkingDirectory.Length == 0,
+    "game launch does not inject arguments or depend on the tool working directory");
+Check(parentBypass == Environment.GetEnvironmentVariable("NO_PROXY"),
+    "game launch leaves proxy environment settings unchanged");
 File.WriteAllBytes(bundle, new byte[] { 1, 2 });
 Check(first != IndexService.ComputeSourceStamp(root, false, false), "same filename update invalidates index");
 first = IndexService.ComputeSourceStamp(root, false, false);
@@ -585,6 +675,8 @@ var ui = new Thread(() =>
     try
     {
         DetailPanelChecks.Run(root, Check);
+        RestoreChecks.RunUi(root, Check);
+        SkillMovieChecks.RunUi(root, Check);
         using var dialog = new ExportSelectionDialog(new[]
         {
             new ModEntry { TextureName = "UT_Hero_Card_135_06", Bundle = "new-hero.bundle", ModifiedAt = now },
@@ -621,7 +713,7 @@ var ui = new Thread(() =>
                 BundlePath = Path.Combine(root, "skill.bundle"),
                 BundleName = "skill.bundle",
                 Name = "Talent-001",
-                Display = "技能动画 · Talent-001",
+                Display = "Q版动作 · Talent-001",
                 Kind = ResourceKinds.Texture,
                 IsSkillAnimation = true,
                 OwnerHeroId = "101",
@@ -643,7 +735,7 @@ var ui = new Thread(() =>
                 "skill green removal is opt-in at scale " + scale);
             Check(controls.OfType<VideoCropControl>().Single().Visible,
                 "skill crop surface is visible at scale " + scale);
-            var skillButton = controls.OfType<Button>().Single(c => c.Text == "替换技能动画");
+            var skillButton = controls.OfType<Button>().Single(c => c.Text == "替换Q版动作");
             Check(skillButton.Visible, "skill replacement action is visible at scale " + scale);
             var footer = skill.Controls[0].Controls.OfType<FlowLayoutPanel>().Single();
             Check(footer.Controls.Cast<Control>().Where(c => c.Visible)

@@ -17,11 +17,12 @@ public sealed class VideoRuntimeDialog : Form
 
     public VideoRuntimeDialog()
     {
+        SuspendLayout();
+        WindowLayout.Configure(this);
         Text = "视频转换组件 - " + AppBuildInfo.Version;
         Font = Theme.UI(9f);
         BackColor = Theme.Bg;
         ForeColor = Theme.Text;
-        AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterParent;
         ClientSize = new Size(510, 310);
         MinimumSize = new Size(450, 310);
@@ -63,6 +64,7 @@ public sealed class VideoRuntimeDialog : Form
         _install.Click += async (_, _) => await InstallAsync();
         _cancel.Click += (_, _) => { if (_operation != null) _operation.Cancel(); else Close(); };
         FormClosing += (_, e) => { if (_operation != null) { e.Cancel = true; _operation.Cancel(); } };
+        ResumeLayout(true);
     }
 
     private async Task InstallAsync()

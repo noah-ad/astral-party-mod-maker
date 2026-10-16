@@ -43,6 +43,8 @@ public sealed class SkillAnimationDialog : Form
 
     public SkillAnimationDialog(TexRef asset, SkillAnimationInfo info, string backupDir, string initialFile = null, SkillMovieInfo movie = null)
     {
+        SuspendLayout();
+        WindowLayout.Configure(this);
         _asset = asset ?? throw new ArgumentNullException(nameof(asset));
         _info = info;
         _movie = movie;
@@ -54,7 +56,6 @@ public sealed class SkillAnimationDialog : Form
         Font = Theme.UI(9f);
         BackColor = Theme.Bg;
         ForeColor = Theme.Text;
-        AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(800, 640);
         MinimumSize = new Size(620, 460);
         StartPosition = FormStartPosition.CenterParent;
@@ -155,12 +156,10 @@ public sealed class SkillAnimationDialog : Form
         FormClosed += (_, _) => Cleanup();
         Shown += async (_, _) =>
         {
-            var area = Screen.FromControl(this).WorkingArea;
-            if (Height > area.Height) Height = area.Height;
-            if (Width > area.Width) Width = area.Width;
             SetStatus("尚未选择视频 · " + KindLabel + " · 仅修改当前资源包");
             if (_initialFile != null) await LoadSourceAsync(_initialFile);
         };
+        ResumeLayout(true);
     }
 
     private static bool IsSource(string path) => new[] { ".mp4", ".mov", ".webm", ".avi", ".mkv", ".gif" }

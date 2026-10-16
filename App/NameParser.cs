@@ -16,7 +16,7 @@ public class AssetCategory
     public bool IsHero => Series == "Hero";
     public bool IsHandCard => Series == "HandCard";
 
-    /// <summary>角色ID >= 1000 视为怪兽。</summary>
+    /// <summary>Monster 前缀或角色ID >= 1000 视为怪兽。</summary>
     public bool IsMonster => IsHero && (MonsterOverride || int.TryParse(HeroId, out var n) && n >= 1000);
 
     /// <summary>用于分组的稳定键 (重命名时作为 key)。怪兽合为一组。</summary>
@@ -53,7 +53,7 @@ public class AssetCategory
                 "Story" => "剧情", "HandCard" => "手牌", "SkillMovie" => "技能特写",
                 "SkillAnimation" => "Q版动作 · " + Raw, _ => Kind
             };
-            return k + (Sfw ? " (和谐)" : "");
+            return (IsMonster ? HeroId + " · " : "") + k + (Sfw ? " (和谐)" : "");
         }
     }
 }
@@ -61,7 +61,7 @@ public class AssetCategory
 public static class NameParser
 {
     private static readonly Regex HeroRe = new(
-        @"^UT_Hero_(?<kind>Bust|Card2|Card|ThinCard|ProfilePhoto|RolePhoto|LevelUp|Story)_(?<id>\d+)(?<rest>.*)$",
+        @"^UT_(?<series>Hero|Monster)_(?<kind>Bust|Card2|Card|ThinCard|ProfilePhoto|RolePhoto|LevelUp|Story)_(?<id>\d+)(?<rest>.*)$",
         RegexOptions.Compiled);
     private static readonly Regex HandRe = new(
         @"^UT_HandCard_(?<id>\d+)(?<sfw>_sfw)?$", RegexOptions.Compiled);
@@ -96,6 +96,7 @@ public static class NameParser
             c.Series = "Hero";
             c.Kind = h.Groups["kind"].Value;
             c.HeroId = h.Groups["id"].Value;
+            c.MonsterOverride = h.Groups["series"].Value == "Monster";
             string rest = h.Groups["rest"].Value;
             c.Sfw = rest.Contains("_sfw");
             var vm = VarRe.Match(rest);

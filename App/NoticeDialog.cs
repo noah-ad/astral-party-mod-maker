@@ -55,6 +55,7 @@ public static class NoticeDialog
 
         table.Controls.Add(t1); table.Controls.Add(t2); table.Controls.Add(link); table.Controls.Add(warn); table.Controls.Add(btnPanel);
         f.Controls.Add(table);
+        WindowLayout.Configure(f);
         f.AcceptButton = ok;
         f.ShowDialog(owner);
     }

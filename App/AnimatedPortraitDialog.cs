@@ -29,6 +29,8 @@ public sealed class AnimatedPortraitDialog : Form
 
     public AnimatedPortraitDialog(string root, string texture, string initialFile = null, Size? targetSize = null)
     {
+        SuspendLayout();
+        WindowLayout.Configure(this);
         _root = root;
         _texture = texture;
         _initialFile = initialFile;
@@ -38,7 +40,6 @@ public sealed class AnimatedPortraitDialog : Form
         Font = Theme.UI(9f);
         BackColor = Theme.Bg;
         ForeColor = Theme.Text;
-        AutoScaleMode = AutoScaleMode.Dpi;
         ClientSize = new Size(800, 640);
         MinimumSize = new Size(600, 440);
         StartPosition = FormStartPosition.CenterParent;
@@ -133,9 +134,6 @@ public sealed class AnimatedPortraitDialog : Form
         };
         Shown += async (_, _) =>
         {
-            var area = Screen.FromControl(this).WorkingArea;
-            if (Height > area.Height) Height = area.Height;
-            if (Width > area.Width) Width = area.Width;
             var all = PortraitReplacement.ReadReceipt(_root);
             _restore.Visible = all != null;
             var receipt = PortraitReplacement.ReadReceipt(_root, _texture);
@@ -153,6 +151,7 @@ public sealed class AnimatedPortraitDialog : Form
                     : "存在旧槽位替换 · 请先恢复原资源，再安装独立视频");
             if (_initialFile != null && !IsDisposed) await PreviewAsync(_initialFile);
         };
+        ResumeLayout(true);
     }
 
     public static bool IsVideo(string path) => new[] { ".mp4", ".mov", ".webm", ".avi", ".mkv", ".gif", ".usm" }

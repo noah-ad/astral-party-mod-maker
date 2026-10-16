@@ -5,6 +5,16 @@ static void Check(bool condition, string name)
     if (!condition) throw new Exception(name);
     Console.WriteLine("PASS " + name);
 }
+if (args.Length == 2 && args[0] == "--dpi-ui")
+{
+    DpiLayoutChecks.Run(args[1], Check);
+    return;
+}
+if (args.Length == 3 && args[0] == "--monster-smoke")
+{
+    MonsterPortraitChecks.Smoke(args[1], args[2], Check);
+    return;
+}
 if (args.Length == 3 && args[0] == "--video-setup-smoke")
 {
     VideoSetupChecks.SmokeAsync(args[1], args[2], Check).GetAwaiter().GetResult();
@@ -358,6 +368,7 @@ if (args.Length == 5 && args[0] == "--animation-install-smoke")
 }
 
 Check(NameParser.Parse("UT_Hero_Card_135_06_0").Skin == "皮肤06", "new hero and skin 06");
+MonsterPortraitChecks.Run(Check);
 SkillMovieChecks.Run(Check);
 IndependentVideoChecks.Run(Check);
 Check(NameParser.Parse("UT_Hero_Card_135").Skin == "原皮", "base skin label");

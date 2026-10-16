@@ -101,6 +101,13 @@ public sealed class SideListFlow : FlowLayoutPanel
             int target = inner - c.Margin.Horizontal;
             if (target < 40) target = 40;
             if (c.Width != target) c.Width = target;
+            if (c is CheckBox box)
+            {
+                int inset = (int)Math.Round(26 * DeviceDpi / 96f);
+                int height = TextRenderer.MeasureText(box.Text, box.Font, new Size(Math.Max(1, target - inset), int.MaxValue),
+                    TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height + (int)Math.Round(8 * DeviceDpi / 96f);
+                if (box.Height != height) box.Height = height;
+            }
         }
         base.OnLayout(e);
     }

@@ -56,7 +56,10 @@ public class MainForm : Form
     private const int ThumbDecodeConcurrency = 6;
     private readonly SemaphoreSlim _thumbnailDecodeGate = new(ThumbDecodeConcurrency, ThumbDecodeConcurrency);
     private int _thumb = ThumbDef;
-    private int Sc(int v) => v;
+    private int _layoutDpi = 96;
+    private int Sc(int v) => (int)Math.Round(v * _layoutDpi / 96f);
+    private bool _layingOutBrowseFilters;
+    private Control _sidebarMetrics;
 
     private const string GameDefault =
         "D:/steam/steamapps/common/Astral Party/8vJXn6CN/AstralParty_CN_Data/StreamingAssets/aa/StandaloneWindows64";
@@ -90,13 +93,11 @@ public class MainForm : Form
     };
     private readonly Label _sideTitle = Theme.Caption("资源分类", true);
     private readonly Label _pageTitle = Theme.Caption("仪表盘", true);
-    private readonly BufferedFlowPanel _browseFilters = new()
+    private readonly BufferedPanel _browseFilters = new()
     {
         Dock = DockStyle.Right,
         Width = 560,
-        BackColor = Color.Transparent,
-        FlowDirection = FlowDirection.LeftToRight,
-        WrapContents = false
+        BackColor = Color.Transparent
     };
     private readonly Label _status = new()
     {
@@ -130,7 +131,8 @@ public class MainForm : Form
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         DoubleBuffered = true;
-        AutoScaleMode = AutoScaleMode.Font;
+        SuspendLayout();
+        WindowLayout.Configure(this);
         Text = AppBuildInfo.WindowTitle;
         Width = 1400;
         Height = 860;
@@ -169,6 +171,7 @@ public class MainForm : Form
             SetFolder(initFolder, normalized.Contains("StandaloneWindows64", StringComparison.OrdinalIgnoreCase), recursive: !normalized.Contains("StandaloneWindows64", StringComparison.OrdinalIgnoreCase));
         }
         Navigate(PageDashboard);
+        ResumeLayout(true);
     }
 
     private void ApplyAppIcon()
@@ -206,10 +209,11 @@ public class MainForm : Form
         catch { return null; }
     }
 
-    protected override void OnHandleCreated(EventArgs e)
+    protected override void OnLoad(EventArgs e)
     {
-        base.OnHandleCreated(e);
+        base.OnLoad(e);
         ApplyDpiScale(DeviceDpi);
+        WindowLayout.FitToWorkingArea(this);
     }
 
     protected override void OnDpiChanged(DpiChangedEventArgs e)
@@ -308,6 +312,11 @@ public class MainForm : Form
         title.Controls.Add(appSub);
         title.Controls.Add(appName);
         title.Controls.Add(logoFrame);
+        title.Layout += (_, _) =>
+        {
+            appName.Width = Math.Max(1, title.ClientSize.Width - appName.Left - Sc(12));
+            appSub.Width = Math.Max(1, title.ClientSize.Width - appSub.Left - Sc(12));
+        };
 
         var nav = new BufferedFlowPanel
         {
@@ -322,6 +331,11 @@ public class MainForm : Form
         AddNav(nav, PageBrowse, "资源浏览", "按类型、角色、皮肤筛资源");
         AddNav(nav, PagePack, "作品 / 导出", "图包、bundle 压缩包");
         AddNav(nav, PageTools, "工具 / 维护", "路径、索引、还原、迁移");
+        nav.Layout += (_, _) =>
+        {
+            foreach (Button button in nav.Controls)
+                button.Width = Math.Max(1, nav.ClientSize.Width - nav.Padding.Horizontal - button.Margin.Horizontal);
+        };
 
         var metrics = new GradientPanel
         {
@@ -332,6 +346,7 @@ public class MainForm : Form
             GradientEnd = Theme.Bg,
             GradientAngle = 90f
         };
+        _sidebarMetrics = metrics;
         metrics.Controls.Add(new Panel { Dock = DockStyle.Top, Height = 1, BackColor = Color.FromArgb(100, Theme.Cyan) });
         _metricLabel.Dock = DockStyle.Top;
         _metricLabel.Height = 46;
@@ -453,24 +468,43 @@ public class MainForm : Form
 
     private void LayoutBrowseFilters(Control topBar, Button refresh)
     {
-        bool stacked = _activePage == PageBrowse && topBar.ClientSize.Width < Sc(760);
-        int targetHeight = stacked ? Sc(104) : Sc(62);
-        if (topBar.Height != targetHeight) topBar.Height = targetHeight;
+        if (_layingOutBrowseFilters || refresh == null) return;
+        _layingOutBrowseFilters = true;
+        try
+        {
+            int pad = Sc(12), gap = Sc(8);
+            int inner = Math.Max(1, topBar.ClientSize.Width - pad * 2);
+            int titleHeight = Math.Max(Sc(42), _pageTitle.Font.Height + Sc(8));
+            int titleWidth = Math.Max(Sc(170), TextRenderer.MeasureText(_pageTitle.Text, _pageTitle.Font).Width + gap);
+            if (_activePage != PageBrowse)
+            {
+                _pageTitle.SetBounds(pad, Sc(8), inner, titleHeight);
+                topBar.Height = titleHeight + Sc(20);
+                return;
+            }
 
-        int width = stacked
-            ? Math.Max(Sc(320), topBar.ClientSize.Width - Sc(24))
-            : Math.Min(Sc(580), Math.Max(Sc(380), topBar.ClientSize.Width - Sc(250)));
-        _pageTitle.Location = new Point(Sc(14), Sc(8));
-        _pageTitle.Size = new Size(stacked ? topBar.ClientSize.Width - Sc(28) : Math.Max(Sc(170), topBar.ClientSize.Width - width - Sc(34)), Sc(42));
-        _browseFilters.Width = width;
-        _browseFilters.Height = Sc(40);
-        _browseFilters.Location = stacked
-            ? new Point(Sc(12), Sc(55))
-            : new Point(topBar.ClientSize.Width - width - Sc(12), Sc(10));
-        _kindBox.Width = Sc(138);
-        int refreshWidth = refresh?.Width ?? Sc(120);
-        if (refresh != null) refresh.Width = Sc(120);
-        _searchBox.Width = Math.Max(Sc(150), width - _kindBox.Width - refreshWidth - Sc(44));
+            int kindWidth = Sc(138);
+            int refreshWidth = Math.Max(Sc(120), TextRenderer.MeasureText(refresh.Text, refresh.Font).Width + refresh.Padding.Horizontal + gap);
+            int searchMin = Sc(150);
+            int rowHeight = Math.Max(Sc(32), Math.Max(_kindBox.PreferredHeight, _searchBox.PreferredHeight));
+            bool inline = inner >= titleWidth + gap + kindWidth + searchMin + refreshWidth + gap * 2;
+            int width = inline ? Math.Min(Sc(580), inner - titleWidth - gap) : inner;
+            bool oneRow = width >= kindWidth + searchMin + refreshWidth + gap * 2;
+            bool searchBesideKind = width >= kindWidth + searchMin + gap;
+            int rows = oneRow ? 1 : searchBesideKind ? 2 : 3;
+            int filtersHeight = rowHeight * rows + gap * (rows - 1);
+            int y = inline ? Sc(8) + (titleHeight - rowHeight) / 2 : Sc(8) + titleHeight + Sc(4);
+            _pageTitle.SetBounds(pad, Sc(8), inline ? inner - width - gap : inner, titleHeight);
+            _browseFilters.SetBounds(topBar.ClientSize.Width - pad - width, y, width, filtersHeight);
+            _kindBox.SetBounds(0, (rowHeight - _kindBox.PreferredHeight) / 2, Math.Min(kindWidth, width), _kindBox.PreferredHeight);
+            int searchY = searchBesideKind ? 0 : rowHeight + gap;
+            int searchX = searchBesideKind ? kindWidth + gap : 0;
+            int searchWidth = width - searchX - (oneRow ? refreshWidth + gap : 0);
+            _searchBox.SetBounds(searchX, searchY + (rowHeight - _searchBox.PreferredHeight) / 2, Math.Max(1, searchWidth), _searchBox.PreferredHeight);
+            refresh.SetBounds(Math.Max(0, width - refreshWidth), oneRow ? 0 : (rows - 1) * (rowHeight + gap), Math.Min(refreshWidth, width), rowHeight);
+            topBar.Height = Math.Max(Sc(8) + titleHeight, y + filtersHeight) + Sc(10);
+        }
+        finally { _layingOutBrowseFilters = false; }
     }
 
     private void ConfigureResourceList()
@@ -661,18 +695,35 @@ public class MainForm : Form
 
     private void ApplyDpiScale(int deviceDpi)
     {
-        _leftPanel.Width = Sc(252);
-        _rightPanel.Width = Sc(320);
+        _layoutDpi = deviceDpi;
+        LayoutMainColumns();
         _flow.Padding = new Padding(Sc(12));
         _categoryList.Padding = new Padding(Sc(8));
         _preview.Height = Sc(210);
         _thumb = Math.Clamp(Sc(ThumbDef), Sc(MinThumb), Sc(MaxThumb));
+        LayoutBrowseFilters(_topBar, _refreshIndexBtn);
 
         foreach (Control c in _flow.Controls)
         {
             if (c is RoundedCard { Tag: TexRef } card) LayoutCard(card);
             else if ((c.Tag as string) == "header") c.Height = Sc(34);
+            else if ((c.Tag as string) == "page_card") c.PerformLayout();
         }
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        LayoutMainColumns();
+        if (_sidebarMetrics != null)
+            _sidebarMetrics.Visible = _activePage != PageBrowse || ClientSize.Height >= Sc(720);
+    }
+
+    private void LayoutMainColumns()
+    {
+        bool compact = ClientSize.Width < Sc(1100);
+        _leftPanel.Width = Sc(compact ? 224 : 252);
+        _rightPanel.Width = Sc(compact ? 272 : 320);
     }
 
     private void Navigate(string page)
@@ -705,6 +756,7 @@ public class MainForm : Form
                 _ => "仪表盘"
             };
             bool browsing = page == PageBrowse;
+            _sidebarMetrics.Visible = !browsing || ClientSize.Height >= Sc(720);
             _browseFilters.Visible = browsing;
             _resourceList.Visible = false;
             _rightPanel.Visible = browsing;
@@ -884,9 +936,11 @@ public class MainForm : Form
     private Button MakeButton(string text, EventHandler handler, int width = 142)
     {
         var b = Theme.FlatButton(text, Sc(width));
+        b.MinimumSize = new Size(Sc(width), Sc(32));
         int textWidth = TextRenderer.MeasureText(text, b.Font, Size.Empty, TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine).Width;
         b.Width = Math.Max(Sc(width), textWidth + Sc(46));
-        b.Height = Sc(32);
+        b.Height = Math.Max(Sc(32), b.Font.Height + Sc(12));
+        b.Padding = new Padding(Sc(12), 0, Sc(12), 0);
         b.Margin = new Padding(0, 0, Sc(8), Sc(6));
         StyleSecondaryButton(b);
         b.Click += handler;
@@ -976,8 +1030,9 @@ public class MainForm : Form
             layingOut = true;
             try
             {
+                foreach (var button in buttons) FitActionButton(button);
                 int pad = Sc(16);
-                int inner = Math.Max(Sc(240), card.ClientSize.Width - pad * 2);
+                int inner = Math.Max(1, card.ClientSize.Width - pad * 2);
                 int titleHeight = Sc(30);
                 titleMark.SetBounds(pad, Sc(18), Sc(3), Sc(16));
                 titleLabel.SetBounds(pad + Sc(11), Sc(12), inner - Sc(11), titleHeight);
@@ -1013,8 +1068,15 @@ public class MainForm : Form
             }
         }
 
-        card.SizeChanged += (_, _) => LayoutContents();
+        card.Layout += (_, _) => LayoutContents();
         LayoutContents();
+    }
+
+    private void FitActionButton(Button button)
+    {
+        button.Width = Math.Max(button.MinimumSize.Width,
+            TextRenderer.MeasureText(button.Text, button.Font).Width + button.Padding.Horizontal + Sc(12));
+        button.Height = Math.Max(Sc(32), button.Font.Height + Sc(12));
     }
 
     private void AddEntryCard(ModEntry entry, TexRef asset, string bundlePath)
@@ -1022,6 +1084,7 @@ public class MainForm : Form
         int width = Math.Max(Sc(360), _flow.ClientSize.Width - _flow.Padding.Horizontal - Sc(24));
         var card = new RoundedCard
         {
+            Tag = "page_card",
             Width = width,
             Height = Sc(86),
             Margin = new Padding(Sc(6), Sc(4), Sc(6), Sc(4)),
@@ -1032,11 +1095,9 @@ public class MainForm : Form
 
         var actions = new BufferedFlowPanel
         {
-            Dock = DockStyle.Right,
-            Width = Sc(315),
             BackColor = Color.Transparent,
             FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false
+            WrapContents = true
         };
         actions.Controls.Add(MakeButton("定位", (_, _) =>
         {
@@ -1058,13 +1119,40 @@ public class MainForm : Form
         }, 140));
 
         var main = Theme.Caption($"{entry.TextureName}\n{entry.Label} · {entry.Bundle} · PathId {entry.PathId}");
-        main.Dock = DockStyle.Fill;
         main.TextAlign = ContentAlignment.MiddleLeft;
         main.AutoEllipsis = true;
 
         card.Controls.Add(main);
         card.Controls.Add(actions);
         _flow.Controls.Add(card);
+        bool layingOut = false;
+        card.Layout += (_, _) =>
+        {
+            if (layingOut) return;
+            layingOut = true;
+            try
+            {
+                foreach (Button action in actions.Controls) FitActionButton(action);
+                int pad = Sc(12), gap = Sc(8);
+                int inner = Math.Max(1, card.ClientSize.Width - pad * 2);
+                int actionWidth = actions.Controls.Cast<Control>().Sum(c => c.Width + c.Margin.Horizontal);
+                bool inline = inner >= Sc(240) + gap + actionWidth;
+                main.SetBounds(pad, pad, inline ? inner - actionWidth - gap : inner, Sc(48));
+                int available = inline ? actionWidth : inner;
+                int rowHeight = actions.Controls.Cast<Control>().Max(c => c.Height + c.Margin.Vertical);
+                int rows = 1, used = 0;
+                foreach (Control action in actions.Controls)
+                {
+                    int item = action.Width + action.Margin.Horizontal;
+                    if (used > 0 && used + item > available) { rows++; used = 0; }
+                    used += item;
+                }
+                actions.SetBounds(inline ? main.Right + gap : pad, inline ? pad : main.Bottom + gap, available, rows * rowHeight);
+                card.Height = Math.Max(main.Bottom, actions.Bottom) + pad;
+            }
+            finally { layingOut = false; }
+        };
+        card.PerformLayout();
     }
 
     private string CurrentKind => (_kindBox.SelectedItem as KindOption)?.Id ?? ResourceKinds.Texture;
@@ -1260,7 +1348,7 @@ public class MainForm : Form
 
         if (kind == ResourceKinds.Texture)
         {
-            var advanced = new CheckBox { Text = "动作帧 / 特效 / 其它资源", Checked = _advancedCategories, AutoSize = true, ForeColor = Theme.SubText, Margin = new Padding(8, 14, 4, 8) };
+            var advanced = new CheckBox { Text = "动作帧 / 特效 / 其它资源", Checked = _advancedCategories, AutoSize = false, ForeColor = Theme.SubText, Margin = new Padding(Sc(8), Sc(14), Sc(4), Sc(8)) };
             advanced.CheckedChanged += (_, _) => { _advancedCategories = advanced.Checked; BuildCategoryList(kind); };
             _categoryList.Controls.Add(advanced);
         }

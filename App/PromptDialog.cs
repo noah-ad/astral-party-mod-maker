@@ -53,6 +53,7 @@ public static class PromptDialog
         table.Controls.Add(box, 0, 1);
         table.Controls.Add(btnPanel, 0, 2);
         f.Controls.Add(table);
+        WindowLayout.Configure(f);
         f.AcceptButton = ok; f.CancelButton = cancel;
         box.SelectAll();
 

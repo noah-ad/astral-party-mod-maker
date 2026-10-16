@@ -707,6 +707,10 @@ public class IndexService
                 entry.OwnerHeroId = null;
                 entry.OwnerVariant = null;
                 entry.OwnerIsMonster = false;
+            }
+            // Refresh naming rules from cached metadata without reopening unchanged bundles.
+            if (entry.Kind == ResourceKinds.Texture)
+            {
                 entry.CategoryId = ResourceCategories.Categorize(entry.Kind, entry.Name, entry.Width, entry.Height);
                 entry.CategoryLabel = ResourceCategories.Label(entry.Kind, entry.CategoryId);
             }

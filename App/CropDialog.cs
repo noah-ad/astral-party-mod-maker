@@ -10,6 +10,7 @@ using Point = System.Drawing.Point;
 using RectangleF = System.Drawing.RectangleF;
 using Rectangle = System.Drawing.Rectangle;
 using SizeF = System.Drawing.SizeF;
+using Size = System.Drawing.Size;
 using Color = System.Drawing.Color;
 
 namespace JixModMaker;
@@ -40,6 +41,8 @@ public class CropDialog : Form
 
     public CropDialog(string imagePath, int targetW, int targetH, string title)
     {
+        SuspendLayout();
+        WindowLayout.Configure(this);
         _srcPath = imagePath;
         _src = new Bitmap(imagePath);
         _targetW = targetW; _targetH = targetH;
@@ -48,29 +51,24 @@ public class CropDialog : Form
         Width = 940; Height = 760;
         StartPosition = FormStartPosition.CenterParent;
         BackColor = Theme.Bg; ForeColor = Theme.Text; Font = Theme.UI(9.5f);
-        AutoScaleMode = AutoScaleMode.Dpi;
         KeyPreview = true;
         KeyDown += OnKey;
 
-        var bar = new Panel { Dock = DockStyle.Bottom, Height = 52, BackColor = Theme.Bar };
-        var tools = new FlowLayoutPanel { Dock = DockStyle.Left, AutoSize = true, WrapContents = false, Padding = new Padding(8, 9, 0, 0), BackColor = Theme.Bar };
+        var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            WrapContents = true, Padding = new Padding(8), BackColor = Theme.Bar };
         var btnFit = Theme.FlatButton("适应整图"); btnFit.Margin = new Padding(3); btnFit.Click += (_, _) => { Fit(); };
         var btnFill = Theme.FlatButton("填满画布"); btnFill.Margin = new Padding(3); btnFill.Click += (_, _) => { Fill(); };
         var btnCenter = Theme.FlatButton("居中"); btnCenter.Margin = new Padding(3); btnCenter.Click += (_, _) => { Center(); };
         var btnZoomIn = Theme.FlatButton("放大 +"); btnZoomIn.Margin = new Padding(3); btnZoomIn.Click += (_, _) => ZoomLayer(1.1f);
         var btnZoomOut = Theme.FlatButton("缩小 −"); btnZoomOut.Margin = new Padding(3); btnZoomOut.Click += (_, _) => ZoomLayer(0.9f);
-        tools.Controls.AddRange(new Control[] { btnFit, btnFill, btnCenter, btnZoomIn, btnZoomOut });
-
-        var right = new FlowLayoutPanel { Dock = DockStyle.Right, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(0, 9, 8, 0), BackColor = Theme.Bar };
         var ok = Theme.FlatButton("✔ 确定"); ok.Margin = new Padding(3); ok.Click += (_, _) => DoRender();
         var cancel = Theme.FlatButton("取消"); cancel.Margin = new Padding(3);
         cancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
-        right.Controls.Add(ok); right.Controls.Add(cancel);
-        bar.Controls.Add(tools); bar.Controls.Add(right);
+        bar.Controls.AddRange(new Control[] { btnFit, btnFill, btnCenter, btnZoomIn, btnZoomOut, cancel, ok });
 
         var hint = new Label
         {
-            Dock = DockStyle.Top, Height = 26, BackColor = Theme.Bar, ForeColor = Theme.SubText,
+            Dock = DockStyle.Top, AutoSize = true, BackColor = Theme.Bar, ForeColor = Theme.SubText,
             TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 0, 0),
             Text = "拖动=移动图片 · 滚轮/+−=缩放 · 方向键=微调(Shift 大步) · 亮区(画布)内为最终效果, 外面会被裁掉"
         };
@@ -88,8 +86,10 @@ public class CropDialog : Form
         Controls.Add(_canvas);
         Controls.Add(hint);
         Controls.Add(bar);
+        SizeChanged += (_, _) => hint.MaximumSize = new Size(Math.Max(1, ClientSize.Width), 0);
 
         Fit();   // 初始: 整图适应画布居中
+        ResumeLayout(true);
     }
 
     protected override void OnShown(EventArgs e) { base.OnShown(e); RecalcView(); _canvas.Invalidate(); }

@@ -52,7 +52,7 @@ public static class ResourceCategories
             Id = CharacterId,
             Label = "角色 / 皮肤 / 怪物",
             Description = "角色卡面、细卡、半身、头像、角色照、升级图、技能特写、Q版动作、怪物立绘",
-            Prefixes = new[] { "UT_Hero_", "UT_Item_PlayerPhoto", "UT_Item_StandingPainting" }
+            Prefixes = new[] { "UT_Hero_", "UT_Monster_", "UT_Item_PlayerPhoto", "UT_Item_StandingPainting" }
         },
         new() { Id = "hand_card", Label = "手牌 / 技能卡", Description = "对局卡面 UT_HandCard", Prefixes = new[] { "UT_HandCard" } },
         new() { Id = "background", Label = "背景 / 横幅", Description = "主页背景、账号背景、商店背景", Prefixes = new[] { "UT_Item_AccountBackground", "UT_AccountBackground", "UT_Item_KV", "UT_StoreBG", "UT_MapScene_", "UT_MapPreview_", "UT_MapScene" } },

@@ -2,7 +2,8 @@ namespace JixModMaker;
 
 public sealed class AnimatedPortraitDialog : Form
 {
-    private readonly string _root, _texture, _initialFile;
+    private string _root;
+    private readonly string _texture, _initialFile, _gameDirectory;
     private readonly Size _targetSize;
     private readonly string _work = Path.Combine(Path.GetTempPath(), "JixDragVideo-" + Guid.NewGuid().ToString("N"));
     private readonly PictureBox _preview = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(48, 48, 52) };
@@ -27,13 +28,14 @@ public sealed class AnimatedPortraitDialog : Form
     private string _lastInput;
     public string ResultMessage { get; private set; } = "尚未替换";
 
-    public AnimatedPortraitDialog(string root, string texture, string initialFile = null, Size? targetSize = null)
+    public AnimatedPortraitDialog(string root, string texture, string initialFile = null, Size? targetSize = null, string gameDirectory = null)
     {
         SuspendLayout();
         WindowLayout.Configure(this);
-        _root = root;
+        _root = PortraitReplacement.FindRoot(root, gameDirectory);
         _texture = texture;
         _initialFile = initialFile;
+        _gameDirectory = gameDirectory;
         _targetSize = targetSize ?? new Size(880, 1205);
         if (_targetSize.Width <= 0 || _targetSize.Height <= 0) throw new ArgumentOutOfRangeException(nameof(targetSize));
         Text = "替换为视频 / GIF - " + AppBuildInfo.ReleaseLabel;
@@ -139,12 +141,12 @@ public sealed class AnimatedPortraitDialog : Form
             var receipt = PortraitReplacement.ReadReceipt(_root, _texture);
             if (receipt?.Texture == _texture)
             {
-                bool installed = await Task.Run(() => PortraitReplacement.IsInstalled(_root, receipt));
+                var binding = await Task.Run(() => PortraitReplacement.CheckCurrentBinding(_root, receipt, _gameDirectory));
                 if (IsDisposed) return;
-                _export.Visible = installed;
+                _export.Visible = binding.Current;
                 _removeGreen.Checked = receipt.RemoveGreen;
-                SetStatus(installed ? "已写入并校验 · " + receipt.SourceName + " · 游戏内效果待确认" : "旧替换记录已失效：资源已更新或被重置");
-                if (installed && File.Exists(receipt.Preview)) { ShowPreview(receipt.Preview); _views.SelectedIndex = 1; }
+                SetStatus(binding.Message);
+                if (binding.Current && File.Exists(receipt.Preview)) { ShowPreview(receipt.Preview); _views.SelectedIndex = 1; }
             }
             else if (all != null)
                 SetStatus(all.Mode == IndependentVideoPatch.Mode ? $"已有 {all.Portraits?.Count ?? 1} 个独立动态目标 · 当前目标尚未替换"
@@ -267,9 +269,16 @@ public sealed class AnimatedPortraitDialog : Form
             var token = _operation.Token;
             PortraitReplacement.EnsureGameClosed();
             SetStatus("正在定位目标资源…");
-            var found = await Task.Run(() => AnimatedPortraitPatch.FindBundles(_root, token, runtimeOnly: true), token);
+            var found = await Task.Run(() => AnimatedPortraitPatch.FindBundles(_root, token, runtimeOnly: true, gameDirectory: _gameDirectory), token);
             if (found.Runtime == null)
                 throw new InvalidDataException("缺少热更新程序集，请先让游戏完成资源下载。");
+            string installRoot = Directory.GetParent(Directory.GetParent(Path.GetDirectoryName(found.Runtime)!)!.FullName)!.FullName;
+            if (!RuntimeBundleLocator.SamePath(installRoot, _root))
+            {
+                if (PortraitReplacement.ReadReceipt(_root) != null)
+                    throw new IOException("旧目录仍有动态替换记录，请先点击“恢复原资源”，再对当前版本替换。旧备份不会自动覆盖新版。");
+                _root = installRoot;
+            }
             if (!_animationCurrent) await GenerateAnimationAsync(token);
             string usm = await PortraitVideoConverter.ConvertAsync(_lastInput, _work, PortraitVideoSettings.Load(), ConversionOptions(), token,
                 new Progress<string>(message => _status.Text = message));
@@ -278,10 +287,12 @@ public sealed class AnimatedPortraitDialog : Form
             _cancel.Enabled = false;
             SetStatus("正在验证类型结构、备份并写入…");
             bool removeGreen = _removeGreen.Checked;
-            await Task.Run(() => PortraitReplacement.Apply(new(_root, found.Runtime, null, _texture, usm, "", Independent: true),
+            await Task.Run(() => PortraitReplacement.Apply(new(_root, found.Runtime, null, _texture, usm, "", Independent: true, GameDirectory: _gameDirectory),
                 Path.Combine(_work, "preview.gif"), Path.GetFileName(_lastInput), removeGreen));
             _restore.Visible = _export.Visible = true;
-            SetStatus("已写入独立视频并回读校验 · " + Path.GetFileName(_lastInput) + "\n官方异画未改动 · 游戏内效果待确认。");
+            var binding = await Task.Run(() => PortraitReplacement.CheckCurrentBinding(_root, PortraitReplacement.ReadReceipt(_root), _gameDirectory));
+            _export.Visible = binding.Current;
+            SetStatus(binding.Message + "\n" + Path.GetFileName(_lastInput) + " · 官方异画未改动。");
         }
         catch (OperationCanceledException) { SetStatus("已取消 · 未写入本次视频"); }
         catch (Exception ex) { SetStatus("替换未完成：" + ex.Message); }
@@ -320,8 +331,8 @@ public sealed class AnimatedPortraitDialog : Form
         try
         {
             var receipt = PortraitReplacement.ReadReceipt(_root);
-            if (!await Task.Run(() => PortraitReplacement.IsInstalled(_root, receipt)))
-                throw new IOException("资源已改变，不能导出旧的替换包。");
+            var binding = await Task.Run(() => PortraitReplacement.CheckCurrentBinding(_root, receipt, _gameDirectory));
+            if (!binding.Current) throw new IOException(binding.Message + "\n不能导出未核验的旧动态包。");
             using var save = new SaveFileDialog { Filter = "直接替换 ZIP|*.zip", FileName = _texture + "-动态替换.zip" };
             if (save.ShowDialog(this) != DialogResult.OK) return;
             string history = Path.GetFullPath(Path.Combine(_root, "_原始备份", "动态立绘")) + Path.DirectorySeparatorChar;
@@ -331,7 +342,7 @@ public sealed class AnimatedPortraitDialog : Form
             _writing = true;
             _cancel.Enabled = false;
             await Task.Run(() => File.Copy(receipt.ReplacementZip, save.FileName, true));
-            SetStatus("已导出直接替换 ZIP：" + Path.GetFileName(save.FileName));
+            SetStatus("已导出直接替换 ZIP：" + Path.GetFileName(save.FileName) + "\n覆盖目录：" + _root);
         }
         catch (OperationCanceledException) { SetStatus("已取消导出"); }
         catch (Exception ex) { SetStatus("导出失败：" + ex.Message); }

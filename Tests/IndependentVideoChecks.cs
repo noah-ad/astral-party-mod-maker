@@ -15,7 +15,7 @@ internal static class IndependentVideoChecks
         try
         {
             byte[] original = File.ReadAllBytes(typeof(SkinStandingPaintingConfigureItem).Assembly.Location);
-            byte[] patched = IndependentVideoPatch.PatchAssembly(original, new[] { "UT_Hero_Card_101", "UT_Hero_Card_102", "UT_HandCard_21001", "UT_Event_1001" });
+            byte[] patched = IndependentVideoPatch.PatchAssembly(original, new[] { "UT_Hero_Card_101", "UT_Hero_Card_102", "UT_HandCard_21001", "UT_HandCard_20001", "UT_Event_1001", "UT_MapEvent_31001" });
             var context = new AssemblyLoadContext("independent-fixture-" + Guid.NewGuid(), true);
             try
             {
@@ -65,9 +65,48 @@ internal static class IndependentVideoChecks
             catch (InvalidOperationException) { check(true, "independent build refuses stacking patches"); }
             try { IndependentVideoPatch.VideoKey("UT_Hero_Card_101/../../outside"); throw new Exception("accepted unsafe target"); }
             catch (ArgumentException) { check(true, "independent filenames reject path injection"); }
+            DataPathPlayback(original, root, check);
             Transactions(root, check);
         }
         finally { Directory.Delete(root, true); }
+    }
+
+    private static void DataPathPlayback(byte[] original, string root, Action<bool, string> check)
+    {
+        byte[] patched = IndependentVideoPatch.PatchAssembly(original,
+            new[] { "UT_Hero_Card_101", "UT_HandCard_21001", "UT_HandCard_20001", "UT_Event_1001", "UT_MapEvent_31001" }, useDataPath: true);
+        var context = new AssemblyLoadContext("data-path-fixture-" + Guid.NewGuid(), true);
+        try
+        {
+            var assembly = context.LoadFromStream(new MemoryStream(patched));
+            var application = assembly.GetType("UnityEngine.Application")!;
+            string data = Path.Combine(root, "Game_Data"), user = Path.Combine(root, "user");
+            application.GetProperty("dataPath")!.SetValue(null, data);
+            application.GetProperty("persistentDataPath")!.SetValue(null, user);
+            string folder = data + IndependentVideoPatch.PersistentFolder;
+            string wrongFolder = user + IndependentVideoPatch.PersistentFolder;
+            Directory.CreateDirectory(folder);
+            Directory.CreateDirectory(wrongFolder);
+            string key = IndependentVideoPatch.VideoKey("UT_Hero_Card_101");
+            File.WriteAllText(wrongFolder + key + ".usm", "inactive user video");
+            var configType = assembly.GetType("SkinStandingPaintingConfigureItem")!;
+            var config = Activator.CreateInstance(configType);
+            (string, bool) Portrait() => ((string, bool))configType.GetMethod("GetCharacter")!.Invoke(config, null)!;
+            check(Portrait() == ("UT_Hero_Card_101", false), "dataPath binding ignores a legacy video in persistentDataPath");
+            File.WriteAllText(folder + key + ".usm", "active installation video");
+            check(Portrait() == (key, true), "dataPath binding selects the standalone installation-cache video");
+            var controllerType = assembly.GetType("UI.CriManaMovieControllerForGGraph")!;
+            var controller = Activator.CreateInstance(controllerType);
+            controllerType.GetMethod("SetAsset")!.Invoke(controller, new object[] { key, null });
+            object player = controllerType.GetProperty("player")!.GetValue(controller)!;
+            check((string)player.GetType().GetField("File")!.GetValue(player)! == folder + key + ".usm",
+                "native player reads exactly the installation-cache file validated by the binding");
+            File.WriteAllText(folder + "disabled", "");
+            check(Portrait() == ("UT_Hero_Card_101", false), "dataPath disable switch restores static artwork without startup changes");
+            File.Delete(folder + "disabled");
+            Cards(assembly, folder, check);
+        }
+        finally { context.Unload(); }
     }
 
     private static void Cards(Assembly assembly, string folder, Action<bool, string> check)
@@ -76,7 +115,7 @@ internal static class IndependentVideoChecks
         var viewType = assembly.GetType("UI.UICom_Card")!;
         var view = Activator.CreateInstance(viewType);
         var renderer = assembly.GetType("UI.CommonUIManager")!.GetMethod("RendererCardContent")!;
-        foreach (string target in new[] { "UT_HandCard_21001", "UT_Event_1001" })
+        foreach (string target in new[] { "UT_HandCard_21001", "UT_HandCard_20001", "UT_Event_1001", "UT_MapEvent_31001" })
         {
             object card = Activator.CreateInstance(type)!;
             type.GetField("Key")!.SetValue(card, target);
@@ -148,12 +187,12 @@ internal static class IndependentVideoChecks
         }
     }
 
-    public static void RealAssembly(string dll, string destination, Action<bool, string> check)
+    public static void RealAssembly(string dll, string destination, Action<bool, string> check, bool useDataPath = false)
     {
         byte[] original = File.ReadAllBytes(dll);
         var dependencies = Directory.EnumerateFiles(Path.GetDirectoryName(dll)!, "*.dll")
             .ToDictionary(Path.GetFileNameWithoutExtension, File.ReadAllBytes, StringComparer.OrdinalIgnoreCase);
-        var patched = IndependentVideoPatch.PatchAssembly(original, new[] { "UT_Hero_Card_101", "UT_HandCard_21001", "UT_Event_1001", "UT_MapEvent_1001" }, dependencies);
+        var patched = IndependentVideoPatch.PatchAssembly(original, new[] { "UT_Hero_Card_101", "UT_HandCard_21001", "UT_Event_1001", "UT_MapEvent_1001" }, dependencies, useDataPath);
         using var before = ModuleDefinition.ReadModule(new MemoryStream(original));
         using var after = ModuleDefinition.ReadModule(new MemoryStream(patched));
         check(before.AssemblyReferences.Select(a => a.FullName).SequenceEqual(after.AssemblyReferences.Select(a => a.FullName)),
@@ -180,6 +219,9 @@ internal static class IndependentVideoChecks
             "independent mappings contain no borrowed VHandCard key");
         check(injected.Any(m => m.Name == "JixMapAnimatedCard") && injected.Any(m => m.Name == "JixMapAnimatedPortrait"),
             "real patch supports portrait, hand card and event mappings together");
+        check(injected.Single(m => m.Name == "JixIndependentVideoPath").Body.Instructions
+            .Any(i => i.Operand is MethodReference m && m.Name == (useDataPath ? "get_dataPath" : "get_persistentDataPath")),
+            "real patch uses the video storage API selected for its cache layout");
         check(after.GetType("UI.CriManaMovieControllerForGGraph").Methods.Single(m => m.Name == "SetAsset").Body.Instructions
             .Any(i => i.Operand is MethodReference m && m.Name == "SetFile"), "real controller uses raw-file native API");
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(destination))!);

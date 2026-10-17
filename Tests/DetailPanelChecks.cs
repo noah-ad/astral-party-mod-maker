@@ -78,7 +78,7 @@ internal static class DetailPanelChecks
             var details = animated.Parent.Parent;
             var rows = details.Controls.Cast<Control>().OrderBy(c => c.Top).ToArray();
             for (int i = 1; i < rows.Length; i++) check(rows[i - 1].Bottom <= rows[i].Top, "detail rows never overlap: " + scenario);
-            foreach (var name in new[] { "_detailTitle", "_detailMeta", "_detailPath", "_detailHint" })
+            foreach (var name in new[] { "_detailTitle", "_detailState", "_detailMeta", "_detailPath", "_detailHint" })
             {
                 var label = (Label)Field(name);
                 check(label.Height >= label.GetPreferredSize(new Size(label.Width, 0)).Height, "detail label is not clipped: " + name + " " + scenario);

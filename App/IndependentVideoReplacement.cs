@@ -26,6 +26,7 @@ public static class IndependentVideoReplacement
         string sourceName = "", bool removeGreen = false)
     {
         PortraitReplacement.EnsureGameClosed();
+        ValidateCurrentTarget(request);
         var previous = PortraitReplacement.ReadReceipt(request.Root);
         if (previous != null && !PortraitReplacement.IsInstalled(request.Root, previous))
         {
@@ -41,6 +42,7 @@ public static class IndependentVideoReplacement
         string stagedState = Path.Combine(backup, "receipt.json");
         File.WriteAllText(stagedState, JsonSerializer.Serialize(receipt));
         PortraitReplacement.EnsureGameClosed();
+        ValidateCurrentTarget(request);
         IndependentVideoTransaction.Apply(request.Root, receipt.ReplacementZip, receipt.RestoreZip);
         try
         {
@@ -67,6 +69,7 @@ public static class IndependentVideoReplacement
     public static PortraitReplacement.Receipt Build(AnimatedPortraitPatch.Request request, PortraitReplacement.Receipt previous,
         string destinationDirectory, string preview = null, string sourceName = "", bool removeGreen = false)
     {
+        ValidateCurrentTarget(request);
         string root = Path.GetFullPath(request.Root);
         string relativeRuntime = Path.GetRelativePath(root, Path.GetFullPath(request.RuntimeBundle)).Replace('\\', '/');
         IndependentVideoTransaction.TargetPath(root, relativeRuntime);
@@ -79,6 +82,8 @@ public static class IndependentVideoReplacement
         PortraitMovieMetadata.Read(request.UsmFile).Validate(usm);
         if (previous != null && (previous.Mode != IndependentVideoPatch.Mode || !PortraitReplacement.IsInstalled(root, previous)))
             throw new IOException("旧替换状态不匹配，已停止生成独立视频。");
+        if (previous != null && !previous.Hashes.ContainsKey(relativeRuntime))
+            throw new IOException("游戏的程序集版本已变化。旧动态写在另一个资源包，请先还原旧动态，再替换当前版本；不会沿用旧版 DLL。");
         Directory.CreateDirectory(destinationDirectory);
         string work = Path.Combine(destinationDirectory, "build");
         Directory.CreateDirectory(work);
@@ -109,8 +114,10 @@ public static class IndependentVideoReplacement
             var now = DateTimeOffset.Now;
             entries[request.TextureName] = new(key, sourceName, removeGreen, now, savedPreview);
             string rebuiltRuntime = Path.Combine(work, "patched-runtime");
-            string platform = RewriteRuntime(originalRuntime, rebuiltRuntime, entries.Keys.ToArray());
+            bool useDataPath = RuntimeBundleLocator.UsesDataPath(root, request.GameDirectory);
+            string platform = RewriteRuntime(originalRuntime, rebuiltRuntime, entries.Keys.ToArray(), useDataPath);
             if (platform is not "13" and not "19") throw new InvalidDataException("独立视频仅支持 Android / Windows 64 位资源。");
+            if (useDataPath && platform != "19") throw new InvalidDataException("安装目录视频路径仅适用于 Windows；Android 必须使用用户缓存目录。");
 
             string stagedUsm = Path.Combine(work, "input.usm");
             File.WriteAllBytes(stagedUsm, usm);
@@ -163,12 +170,24 @@ public static class IndependentVideoReplacement
             }, StringComparer.OrdinalIgnoreCase);
             return new(request.TextureName, key, sourceName, removeGreen, now, savedPreview, replacement, restore, baseline,
                 hashes, entries, IndependentVideoPatch.Mode,
-                new Dictionary<string, string> { [relativeRuntime] = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(originalRuntime))) });
+                new Dictionary<string, string> { [relativeRuntime] = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(originalRuntime))) }, useDataPath);
         }
         finally { Directory.Delete(work, true); }
     }
 
-    private static string RewriteRuntime(string source, string destination, string[] targets)
+    private static void ValidateCurrentTarget(AnimatedPortraitPatch.Request request)
+    {
+        var target = RuntimeBundleLocator.Resolve(request.Root, request.GameDirectory);
+        if (target != null && !RuntimeBundleLocator.SamePath(target.Path, request.RuntimeBundle))
+            throw new IOException("所选程序集不是当前游戏 catalog 指向的资源包，已阻止写入旧版本。请重新打开动态替换。");
+        if (target != null && !RuntimeBundleLocator.SamePath(target.CacheRoot, request.Root))
+            throw new IOException("当前程序集位于另一处缓存，必须同时使用对应的安装、视频和备份目录。请重新打开动态替换。");
+        if (target != null && RuntimeBundleLocator.CacheRoots(request.Root, request.GameDirectory)
+            .Any(root => !RuntimeBundleLocator.SamePath(root, request.Root) && PortraitReplacement.ReadReceipt(root) != null))
+            throw new IOException("另一处缓存仍有动态替换记录，请先还原旧动态，保留旧备份后再替换当前版本。");
+    }
+
+    private static string RewriteRuntime(string source, string destination, string[] targets, bool useDataPath)
     {
         byte[] expected = null;
         string platform = AnimatedPortraitPatch.Rewrite(source, destination, (manager, file) =>
@@ -193,7 +212,7 @@ public static class IndependentVideoReplacement
                 prefix = reader.ReadBytes(checked((int)(start - reader.Position)));
             }
             if (runtime == null) throw new InvalidDataException("未找到 AstralParty.Runtime.dll。");
-            expected = IndependentVideoPatch.PatchAssembly(dependencies["AstralParty.Runtime"], targets, dependencies);
+            expected = IndependentVideoPatch.PatchAssembly(dependencies["AstralParty.Runtime"], targets, dependencies, useDataPath);
             using var stream = new MemoryStream();
             using (var writer = new AssetsFileWriter(stream) { BigEndian = reader.BigEndian })
             {

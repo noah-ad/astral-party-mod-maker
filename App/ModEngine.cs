@@ -1,6 +1,7 @@
 using AssetsTools.NET;
 using AssetsTools.NET.Extra;
 using AssetsTools.NET.Texture;
+using System.Security.Cryptography;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
@@ -28,7 +29,8 @@ public class TexRef
     public string OwnerHeroId;
     public string OwnerVariant;
     public bool OwnerIsMonster;
-    public bool Modded;      // 是否已被本工具改成 RGBA32
+    public bool Modded;
+    public ModificationState Modification;
     public string Display;   // 显示名 (角色模式用 "半身 01" 等友好标签; null 则用 Name)
     public override string ToString() => $"{Name} ({Width}x{Height})";
     public bool IsTexture => Kind == ResourceKinds.Texture;
@@ -42,6 +44,7 @@ public class TexRef
 /// </summary>
 public class ModEngine
 {
+    public sealed record TextureSignature(string Name, long PathId, int Width, int Height, string Format, string Hash);
     private readonly string _tpkPath;
 
     public ModEngine()
@@ -54,6 +57,37 @@ public class ModEngine
         var am = new AssetsManager();
         if (File.Exists(_tpkPath)) am.LoadClassPackage(_tpkPath);
         return am;
+    }
+
+    public List<TextureSignature> ReadTextureSignatures(string bundlePath)
+    {
+        using var source = new FileStream(bundlePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        var manager = NewManager();
+        try
+        {
+            var bundle = manager.LoadBundleFile(source, true);
+            var assets = manager.LoadAssetsFileFromBundle(bundle, 0, false);
+            if (manager.ClassDatabase == null && manager.ClassPackage != null)
+                manager.LoadClassDatabaseFromPackage(assets.file.Metadata.UnityVersion);
+            var result = new List<TextureSignature>();
+            foreach (var info in assets.file.GetAssetsOfType(AssetClassID.Texture2D))
+            {
+                var field = manager.GetBaseField(assets, info);
+                var texture = TextureFile.ReadTextureFile(field);
+                if ((texture.pictureData == null || texture.pictureData.Length == 0) && texture.m_StreamData.size > 0
+                    && !texture.SetPictureDataFromBundle(bundle))
+                    throw new IOException("无法读取贴图的流式数据：" + texture.m_Name);
+                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                foreach (int value in new[] { texture.m_Width, texture.m_Height, texture.m_TextureFormat, texture.m_MipCount,
+                    texture.m_ImageCount, texture.m_TextureDimension, texture.m_ColorSpace })
+                    hash.AppendData(BitConverter.GetBytes(value));
+                hash.AppendData(texture.pictureData ?? Array.Empty<byte>());
+                result.Add(new(texture.m_Name, info.PathId, texture.m_Width, texture.m_Height,
+                    ((TextureFormat)texture.m_TextureFormat).ToString(), Convert.ToHexString(hash.GetHashAndReset())));
+            }
+            return result;
+        }
+        finally { manager.UnloadAll(); }
     }
 
     /// <summary>列出一个 bundle 里所有 Texture2D。</summary>
@@ -122,8 +156,7 @@ public class ModEngine
                 Name = bf["m_Name"].AsString,
                 Width = bf["m_Width"].AsInt,
                 Height = bf["m_Height"].AsInt,
-                Format = ((TextureFormat)fmt).ToString(),
-                Modded = fmt == (int)TextureFormat.RGBA32
+                Format = ((TextureFormat)fmt).ToString()
             };
         }
         catch { return null; }

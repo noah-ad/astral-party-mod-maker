@@ -51,10 +51,11 @@ public static class SkillMovieEngine
 
     public static (long PathId, byte Loop, byte[] Bytes) Read(string bundlePath, string name)
     {
+        using var source = new FileStream(bundlePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
         var manager = Manager();
         try
         {
-            var file = manager.LoadAssetsFileFromBundle(manager.LoadBundleFile(bundlePath), 0, false);
+            var file = manager.LoadAssetsFileFromBundle(manager.LoadBundleFile(source, true), 0, false);
             manager.LoadClassDatabaseFromPackage(file.file.Metadata.UnityVersion);
             var movie = Find(manager, file, name);
             return (movie.Info.PathId, movie.Field["assetInfo"]["loop"].AsByte, movie.Bytes);

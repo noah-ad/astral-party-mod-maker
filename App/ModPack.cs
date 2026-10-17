@@ -1,6 +1,8 @@
 using System.IO.Compression;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Globalization;
 
 namespace JixModMaker;
 
@@ -38,6 +40,7 @@ public class ModManifest
     public string Category { get; set; } = "";    // 角色 / 卡图 (v2, 仅备注)
     public string CreatedAt { get; set; } = "";
     public List<ModEntry> Entries { get; set; } = new();
+    [JsonIgnore] public string LoadNotice { get; set; }
 }
 
 /// <summary>
@@ -52,7 +55,10 @@ public static class PackService
     private static readonly JsonSerializerOptions J = new()
     {
         WriteIndented = true,
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping  // 中文不转义
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,  // 中文不转义
+        PropertyNameCaseInsensitive = true,
+        NumberHandling = JsonNumberHandling.AllowReadingFromString,
+        Converters = { new OptionalTimestampConverter() }
     };
 
     // ---------- 工作区清单 (记录某文件夹下被改过的贴图) ----------
@@ -62,21 +68,106 @@ public static class PackService
     public static ModManifest LoadWorkspace(string folder)
     {
         var p = WorkspacePath(folder);
-        if (File.Exists(p))
+        string error = null;
+        foreach (var candidate in new[] { p, p + ".bak" })
         {
-            try { return JsonSerializer.Deserialize<ModManifest>(File.ReadAllText(p)) ?? new(); }
-            catch { }
+            if (!File.Exists(candidate)) continue;
+            try
+            {
+                var manifest = ReadWorkspace(candidate);
+                if (candidate != p) manifest.LoadNotice = "已读取上次保存的修改记录；当前记录文件缺失或无法读取。";
+                return manifest;
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { error = ex.Message; }
         }
-        return new ModManifest();
+        return new ModManifest { LoadNotice = error == null ? null : "修改记录无法读取，原文件已保留；将尝试从原始备份识别。" };
     }
 
     public static void SaveWorkspace(string folder, ModManifest m)
-        => File.WriteAllText(WorkspacePath(folder), JsonSerializer.Serialize(m, J));
+    {
+        if (m?.Entries == null || m.Entries.Any(entry => entry == null)) throw new JsonException("修改记录无效，未覆盖原文件。");
+        string path = WorkspacePath(folder);
+        string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, JsonSerializer.Serialize(m, J));
+            if (!File.Exists(path)) File.Move(temporary, path);
+            else
+            {
+                bool valid;
+                try { ReadWorkspace(path); valid = true; }
+                catch (JsonException) { valid = false; }
+                if (valid) File.Replace(temporary, path, path + ".bak", true);
+                else
+                {
+                    File.Copy(path, path + ".unreadable-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssfff") + "-" + Guid.NewGuid().ToString("N") + ".json");
+                    File.Move(temporary, path, true);
+                }
+            }
+            m.LoadNotice = null;
+        }
+        finally { if (File.Exists(temporary)) File.Delete(temporary); }
+    }
+
+    private static ModManifest ReadWorkspace(string path)
+    {
+        string content = File.ReadAllText(path);
+        using var document = JsonDocument.Parse(content);
+        if (document.RootElement.ValueKind != JsonValueKind.Object
+            || !document.RootElement.EnumerateObject().Any(property => property.Name.Equals("Entries", StringComparison.OrdinalIgnoreCase)
+                && property.Value.ValueKind == JsonValueKind.Array)) throw new JsonException("记录文件缺少有效的条目列表。");
+        var manifest = JsonSerializer.Deserialize<ModManifest>(content, J) ?? throw new JsonException("记录文件为空。");
+        if (manifest.Entries == null || manifest.Entries.Any(entry => entry == null)) throw new JsonException("记录中存在无效条目。");
+        foreach (var entry in manifest.Entries) entry.Kind ??= ResourceKinds.Texture;
+        return manifest;
+    }
+
+    private sealed class OptionalTimestampConverter : JsonConverter<DateTimeOffset?>
+    {
+        public override DateTimeOffset? Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.Null) return null;
+            if (reader.TokenType == JsonTokenType.String && string.IsNullOrWhiteSpace(reader.GetString())) return null;
+            if (reader.TokenType == JsonTokenType.String && DateTimeOffset.TryParse(reader.GetString(), CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeLocal, out var value)) return value;
+            throw new JsonException("无效的修改时间。");
+        }
+        public override void Write(Utf8JsonWriter writer, DateTimeOffset? value, JsonSerializerOptions options)
+        {
+            if (value == null) writer.WriteNullValue(); else writer.WriteStringValue(value.Value);
+        }
+    }
+
+    public static string BundleKey(string bundle) => (bundle ?? "").Replace('\\', '/');
+
+    private static bool SameEntry(ModEntry entry, string bundle, long pathId, string name)
+        => string.Equals(BundleKey(entry.Bundle), BundleKey(bundle), StringComparison.OrdinalIgnoreCase)
+            && (!string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(entry.TextureName)
+                ? string.Equals(entry.TextureName, name, StringComparison.Ordinal)
+                : pathId != 0 && entry.PathId == pathId);
+
+    public static int MergeRecovered(ModManifest workspace, IEnumerable<ModEntry> recovered)
+    {
+        int changes = 0;
+        foreach (var entry in recovered)
+        {
+            var previous = workspace.Entries.Where(old => SameEntry(old, entry.Bundle, entry.PathId, entry.TextureName) && old.Kind == entry.Kind)
+                .OrderByDescending(old => old.ModifiedAt).FirstOrDefault();
+            if (previous == null) { workspace.Entries.Add(entry); changes++; continue; }
+            if (previous.PathId == entry.PathId && previous.Width == entry.Width && previous.Height == entry.Height && previous.TextureName == entry.TextureName) continue;
+            previous.PathId = entry.PathId;
+            previous.TextureName = entry.TextureName;
+            previous.Width = entry.Width;
+            previous.Height = entry.Height;
+            changes++;
+        }
+        return changes;
+    }
 
     public static void Upsert(ModManifest ws, ModEntry e)
     {
         e.ModifiedAt = DateTimeOffset.UtcNow;
-        ws.Entries.RemoveAll(x => x.Bundle == e.Bundle && x.PathId == e.PathId);
+        ws.Entries.RemoveAll(x => x.Kind == e.Kind && SameEntry(x, e.Bundle, e.PathId, e.TextureName));
         ws.Entries.Add(e);
     }
 
@@ -86,11 +177,7 @@ public static class PackService
     public static bool Contains(ModManifest ws, string bundleName, long pathId, string textureName)
     {
         if (ws?.Entries == null) return false;
-        return ws.Entries.Any(e =>
-            string.Equals(e.Bundle, bundleName, StringComparison.OrdinalIgnoreCase)
-            && (pathId != 0 && e.PathId == pathId
-                || pathId == 0 && !string.IsNullOrWhiteSpace(textureName)
-                && string.Equals(e.TextureName, textureName, StringComparison.Ordinal)));
+        return ws.Entries.Any(entry => SameEntry(entry, bundleName, pathId, textureName));
     }
 
     // ---------- 导出图包 ----------

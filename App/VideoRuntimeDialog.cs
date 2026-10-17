@@ -58,8 +58,11 @@ public sealed class VideoRuntimeDialog : Form
         LayoutText();
         if (VideoRuntime.IsReady)
         {
-            _status.Text = "组件已安装，可检查并重新下载。已校验的下载文件会复用。";
-            _install.Text = "检查 / 修复";
+            bool bundled = VideoRuntime.HasFiles(VideoRuntime.ScriptRoot);
+            _status.Text = bundled ? "组件已随程序附带，可直接离线使用；检查不会下载文件。" : "组件已安装，可检查并重新下载。已校验的下载文件会复用。";
+            _install.Text = bundled ? "检查组件" : "检查 / 修复";
+            if (bundled) sources.Text = "FFmpeg 8.1.1\nPython 3.11.9\nCriCodecs 1.2.0\n\n已包含在 data/Tools/video；不需要联网下载或安装系统组件。";
+            LayoutText();
         }
         _install.Click += async (_, _) => await InstallAsync();
         _cancel.Click += (_, _) => { if (_operation != null) _operation.Cancel(); else Close(); };
@@ -73,13 +76,15 @@ public sealed class VideoRuntimeDialog : Form
         _operation = new CancellationTokenSource();
         _install.Enabled = false;
         _progress.Visible = true;
-        _status.Text = "正在准备下载...";
+        bool bundled = VideoRuntime.HasFiles(VideoRuntime.ScriptRoot);
+        _status.Text = bundled ? "正在检查随包视频组件..." : "正在准备下载...";
         bool installed = false;
         try
         {
             var operation = _operation;
             var progress = new Progress<string>(message => { if (!IsDisposed && ReferenceEquals(_operation, operation)) _status.Text = message; });
-            await VideoRuntime.InstallAsync(progress, _operation.Token);
+            if (bundled) await VideoRuntime.ValidateAsync(VideoRuntime.ScriptRoot, _operation.Token);
+            else await VideoRuntime.InstallAsync(progress, _operation.Token);
             installed = true;
         }
         catch (OperationCanceledException) { _status.Text = "已取消，未修改游戏；点击重试可复用已完成的下载。"; }

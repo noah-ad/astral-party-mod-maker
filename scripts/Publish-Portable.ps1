@@ -15,7 +15,8 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) {
 $repo = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repo 'App/JixModMaker.csproj'
 if ($WithVideoRuntime -and $WithoutVideoRuntime) { throw 'Choose one runtime packaging mode.' }
-$includeVideo = if ($WithVideoRuntime) { 'true' } else { 'false' }
+$bundleVideo = !$WithoutVideoRuntime
+$includeVideo = if ($bundleVideo) { 'true' } else { 'false' }
 $properties = (& dotnet msbuild $project "-p:IncludeVideoRuntime=$includeVideo" `
     '-getProperty:Version,PortableLauncherName,PackageEdition,PackageEditionLabel' | Out-String | ConvertFrom-Json).Properties
 if ($LASTEXITCODE -ne 0) { throw 'Cannot read package version and edition.' }
@@ -33,14 +34,16 @@ if (Test-Path -LiteralPath $output) {
 if ($Zip -and (Test-Path -LiteralPath $archive)) {
     throw "Archive already exists: $archive"
 }
-if ($WithVideoRuntime) {
-    foreach ($relative in @('ffmpeg.exe', 'python/python.exe', 'mux.py', 'inspect_movie.py')) {
+if ($bundleVideo) {
+    foreach ($relative in @('ffmpeg.exe', 'python/python.exe', 'python/LICENSE.txt', 'python/cricodecs-1.2.0.dist-info/METADATA',
+        'third-party/ffmpeg/LICENSE', 'third-party/ffmpeg/README.txt', 'third-party/ffmpeg/SOURCES.md',
+        'third-party/cricodecs/DISTRIBUTION.md', 'mux.py', 'inspect_movie.py')) {
         $file = Join-Path $repo "App/Tools/video/$relative"
         if (!(Test-Path -LiteralPath $file -PathType Leaf)) {
-            throw "Missing local video component: $file. See App/Tools/video/DEPENDENCIES.md, or omit -WithVideoRuntime for the public standard package."
+            throw "Missing bundled video component or notice: $file. Prepare App/Tools/video before building the offline full package, or explicitly use -WithoutVideoRuntime for the standard package."
         }
     }
-    & (Join-Path $repo 'App/Tools/video/python/python.exe') -c 'from cricodecs import usm, video'
+    & (Join-Path $repo 'App/Tools/video/python/python.exe') -I -c 'from cricodecs import usm, video'
     if ($LASTEXITCODE -ne 0) { throw 'The local video runtime is incomplete.' }
 }
 
@@ -58,7 +61,18 @@ foreach ($relative in @('JixModMaker.dll', 'JixModMaker.deps.json', 'JixModMaker
     'Tools/video/mux.py', 'Tools/video/inspect_movie.py', 'Tools/video/DEPENDENCIES.md')) {
     if (!(Test-Path -LiteralPath (Join-Path $data $relative) -PathType Leaf)) { throw "Missing packaged file: $relative" }
 }
-if (!$WithVideoRuntime -and ((Test-Path -LiteralPath (Join-Path $data 'Tools/video/ffmpeg.exe')) -or
+if ($bundleVideo) {
+    foreach ($relative in @('ffmpeg.exe', 'python/python.exe', 'python/python311.dll', 'python/LICENSE.txt',
+        'python/cricodecs-1.2.0.dist-info/METADATA', 'third-party/ffmpeg/LICENSE', 'third-party/ffmpeg/README.txt',
+        'third-party/ffmpeg/SOURCES.md', 'third-party/cricodecs/DISTRIBUTION.md')) {
+        if (!(Test-Path -LiteralPath (Join-Path $data "Tools/video/$relative"))) { throw "Incomplete offline video package: $relative" }
+    }
+    & (Join-Path $data 'Tools/video/ffmpeg.exe') -v error -version | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Bundled FFmpeg cannot start.' }
+    & (Join-Path $data 'Tools/video/python/python.exe') -I -c 'from cricodecs import usm, video'
+    if ($LASTEXITCODE -ne 0) { throw 'Bundled USM runtime cannot start.' }
+}
+if (!$bundleVideo -and ((Test-Path -LiteralPath (Join-Path $data 'Tools/video/ffmpeg.exe')) -or
     (Test-Path -LiteralPath (Join-Path $data 'Tools/video/python')))) {
     throw 'Excluded video binaries leaked into the standard package.'
 }
@@ -67,7 +81,7 @@ if (!$WithVideoRuntime -and ((Test-Path -LiteralPath (Join-Path $data 'Tools/vid
     Edition = $properties.PackageEdition
     EditionLabel = $properties.PackageEditionLabel
     Launcher = $launcher
-    VideoSetup = if ($WithVideoRuntime) { 'bundled' } else { 'upstream-download-sha256' }
+    VideoSetup = if ($bundleVideo) { 'bundled' } else { 'upstream-download-sha256' }
     BuiltAtUtc = [DateTime]::UtcNow.ToString('o')
 } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $data 'package.json') -Encoding UTF8
 if ($Zip) {

@@ -10,6 +10,36 @@ if (args.Length == 2 && args[0] == "--dpi-ui")
     DpiLayoutChecks.Run(args[1], Check);
     return;
 }
+if (args.Length == 3 && args[0] == "--replacement-zip-smoke")
+{
+    ReplacementZipChecks.Smoke(args[1], args[2], Check);
+    return;
+}
+if (args.Length == 1 && args[0] == "--replacement-zip")
+{
+    ReplacementZipChecks.Run(Check);
+    return;
+}
+if (args.Length == 1 && args[0] == "--mod-state")
+{
+    ModificationChecks.Run(Check);
+    return;
+}
+if (args.Length == 3 && args[0] == "--mod-state-smoke")
+{
+    ModificationChecks.Smoke(args[1], args[2], Check);
+    return;
+}
+if (args.Length == 3 && args[0] is "--mod-state-audit" or "--mod-state-repair")
+{
+    ModificationChecks.Audit(args[1], args[2], args[0] == "--mod-state-repair", Check);
+    return;
+}
+if (args.Length == 3 && args[0] == "--mod-state-ui")
+{
+    ModificationChecks.LiveUi(args[1], args[2], Check);
+    return;
+}
 if (args.Length == 3 && args[0] == "--monster-smoke")
 {
     MonsterPortraitChecks.Smoke(args[1], args[2], Check);
@@ -18,6 +48,11 @@ if (args.Length == 3 && args[0] == "--monster-smoke")
 if (args.Length == 3 && args[0] == "--video-setup-smoke")
 {
     VideoSetupChecks.SmokeAsync(args[1], args[2], Check).GetAwaiter().GetResult();
+    return;
+}
+if (args.Length == 3 && args[0] == "--bundled-video-smoke")
+{
+    VideoSetupChecks.BundledSmokeAsync(args[1], args[2], Check).GetAwaiter().GetResult();
     return;
 }
 if (args.Length == 2 && args[0] == "--video-setup-ui")
@@ -40,9 +75,29 @@ if (args.Length == 1 && args[0] == "--independent-unit")
     IndependentVideoChecks.Run(Check);
     return;
 }
-if (args.Length == 3 && args[0] == "--independent-dll")
+if (args.Length == 1 && args[0] == "--runtime-locator")
 {
-    IndependentVideoChecks.RealAssembly(args[1], args[2], Check);
+    RuntimeLocatorChecks.Run(Check);
+    return;
+}
+if (args.Length == 3 && args[0] == "--runtime-locator-live")
+{
+    RuntimeLocatorChecks.LiveAudit(args[1], args[2], Check);
+    return;
+}
+if (args.Length == 4 && args[0] == "--runtime-bundle-smoke")
+{
+    RuntimeLocatorChecks.BundleSmoke(args[1], args[2], args[3], Check);
+    return;
+}
+if (args.Length == 4 && args[0] == "--runtime-data-smoke")
+{
+    RuntimeLocatorChecks.DataBundleSmoke(args[1], args[2], args[3], Check);
+    return;
+}
+if (args.Length == 3 && args[0] is "--independent-dll" or "--independent-data-dll")
+{
+    IndependentVideoChecks.RealAssembly(args[1], args[2], Check, args[0] == "--independent-data-dll");
     return;
 }
 if (args.Length == 5 && args[0] == "--independent-smoke")
@@ -369,8 +424,11 @@ if (args.Length == 5 && args[0] == "--animation-install-smoke")
 
 Check(NameParser.Parse("UT_Hero_Card_135_06_0").Skin == "皮肤06", "new hero and skin 06");
 MonsterPortraitChecks.Run(Check);
+ReplacementZipChecks.Run(Check);
+ModificationChecks.Run(Check);
 SkillMovieChecks.Run(Check);
 IndependentVideoChecks.Run(Check);
+RuntimeLocatorChecks.Run(Check);
 Check(NameParser.Parse("UT_Hero_Card_135").Skin == "原皮", "base skin label");
 var groupedSkill = NameParser.Parse("Talent-001", "115", "02", true, false);
 Check(groupedSkill.GroupKey == "角色 115" && groupedSkill.Skin == "皮肤02" && groupedSkill.Kind == "SkillAnimation",
@@ -703,6 +761,7 @@ var ui = new Thread(() =>
     {
         DetailPanelChecks.Run(root, Check);
         RestoreChecks.RunUi(root, Check);
+        ModificationChecks.RunUi(root, Check);
         SkillMovieChecks.RunUi(root, Check);
         using var dialog = new ExportSelectionDialog(new[]
         {

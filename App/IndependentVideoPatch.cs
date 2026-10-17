@@ -20,7 +20,7 @@ public static class IndependentVideoPatch
     public static string RelativeFile(string texture) => Folder + "/" + VideoKey(texture) + ".usm";
 
     public static byte[] PatchAssembly(byte[] original, IReadOnlyCollection<string> textures,
-        IReadOnlyDictionary<string, byte[]> dependencies = null)
+        IReadOnlyDictionary<string, byte[]> dependencies = null, bool useDataPath = false)
     {
         var targets = textures.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         if (targets.Length == 0 || targets.Length != textures.Count) throw new ArgumentException("Invalid target list");
@@ -46,7 +46,7 @@ public static class IndependentVideoPatch
         var exists = Method(fileType, "Exists", module.TypeSystem.Boolean, false, module.TypeSystem.String);
         var application = FindType(module, "UnityEngine", "Application",
             module.AssemblyReferences.SingleOrDefault(a => a.Name == "UnityEngine.CoreModule"));
-        var persistentPath = Method(application, "get_persistentDataPath", module.TypeSystem.String, false);
+        var videoRoot = Method(application, useDataPath ? "get_dataPath" : "get_persistentDataPath", module.TypeSystem.String, false);
 
         var isKey = Helper(manager, "JixIsIndependentVideo", module.TypeSystem.Boolean, module.TypeSystem.String);
         var il = isKey.Body.GetILProcessor();
@@ -66,7 +66,7 @@ public static class IndependentVideoPatch
 
         var path = Helper(manager, "JixIndependentVideoPath", module.TypeSystem.String, module.TypeSystem.String);
         il = path.Body.GetILProcessor();
-        il.Emit(OpCodes.Call, persistentPath);
+        il.Emit(OpCodes.Call, videoRoot);
         il.Emit(OpCodes.Ldstr, PersistentFolder);
         il.Emit(OpCodes.Call, concat);
         il.Emit(OpCodes.Ldarg_0);
@@ -85,7 +85,7 @@ public static class IndependentVideoPatch
         var missing = Instruction.Create(OpCodes.Leave, finish);
         il.Append(tryStart);
         // A reversible kill switch is checked only when artwork is requested, never during startup.
-        il.Emit(OpCodes.Call, persistentPath);
+        il.Emit(OpCodes.Call, videoRoot);
         il.Emit(OpCodes.Ldstr, PersistentFolder + "disabled");
         il.Emit(OpCodes.Call, concat);
         il.Emit(OpCodes.Call, exists);

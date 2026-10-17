@@ -58,7 +58,7 @@ public sealed class ExportSelectionDialog : Form
         cancel.DialogResult = DialogResult.Cancel;
         footer.Controls.AddRange(new Control[] { _export, cancel });
         var notice = new Label { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(12, 8, 12, 8),
-            Text = "Bundle ZIP 包含整包内容；同一资源包中的其它修改也会一起导出。", Visible = bundles };
+            Text = "同一资源包中的其它修改会一并导出；基础资源与热更新缓存混选时自动分为两个 ZIP。", Visible = bundles };
         layout.Controls.Add(filters, 0, 0);
         layout.Controls.Add(_list, 0, 1);
         layout.Controls.Add(notice, 0, 2);

@@ -8,5 +8,6 @@
   <ItemGroup>
     <ProjectReference Include="../App/JixModMaker.csproj" />
     <Reference Include="Mono.Cecil"><HintPath>../libs/Mono.Cecil.dll</HintPath></Reference>
+    <Reference Include="AssetsTools.NET"><HintPath>../libs/AssetsTools.NET.dll</HintPath></Reference>
   </ItemGroup>
 </Project>

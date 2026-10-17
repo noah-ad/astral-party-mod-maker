@@ -1,11 +1,17 @@
 # Video conversion components
 
-The public v2.3.0 standard package includes the conversion integration, `mux.py`,
+The public v2.3.0-v2.3.2 standard package includes the conversion integration, `mux.py`,
 `inspect_movie.py`, and a first-use setup dialog. It does not redistribute the
 third-party video executables. Users click **Download and enable** when importing
 their first video, or open the video components action in Tools / Maintenance.
 No separate Python installation, pip command, administrator access, or PATH edit
 is required. After setup, conversion works offline for that Windows user.
+
+The v2.3.6 **full video edition** includes FFmpeg, embedded Python and
+CriCodecs under `data/Tools/video`. It is ready without a per-user component
+cache, network download or separate installation. Its maintenance check only
+validates the bundled executables. Copy the complete EXE + data folder when
+moving it to another PC; copying just the EXE or DLL omits the components.
 
 ## Pinned upstream downloads
 
@@ -37,24 +43,38 @@ Both `mux.py` and `inspect_movie.py` must remain under `data/Tools/video`.
 Existing local full packages with `ffmpeg.exe` and `python/` in that directory
 continue to use their bundled components. The public standard package uses the
 user cache instead. Moving the application on the same PC preserves access;
-another PC or Windows user needs to run setup separately.
+another PC or Windows user needs to run setup separately only for that standard
+edition. Full editions carry their components with them.
 
 ## Third-party terms
 
 - Gyan's [builds](https://www.gyan.dev/ffmpeg/builds/) are GPLv3-enabled.
   The extracted FFmpeg directory retains the upstream license and documentation.
   See [FFmpeg's legal page](https://ffmpeg.org/legal.html) before redistributing
-  binaries, including corresponding-source requirements.
+  binaries, including corresponding-source requirements. Full packages preserve
+  the original Gyan `LICENSE` and build `README.txt` under
+  `third-party/ffmpeg`; the README identifies the exact upstream source commit.
+  [Source and original build directions](third-party/ffmpeg/SOURCES.md) accompany
+  the binary; the release also provides the exact FFmpeg source archive.
 - Python is covered by the [PSF license](https://docs.python.org/3.11/license.html);
   the original embedded package's `LICENSE.txt` is retained.
 - CriCodecs is published by [Youjose](https://github.com/Youjose/CriCodecs).
   The inspected 1.2.0 wheel metadata does not specify redistribution terms.
-  It is fetched from the author's PyPI distribution on the user's request;
-  this repository does not mirror or include that wheel in release assets.
+  The full edition preserves the original package files and metadata without
+  modifying the codec. For content uploaded without an Included License,
+  [PyPI Terms of Service, User-Generated Content section 4](https://policies.python.org/pypi.org/Terms-of-Service/#4-license-grant-to-us)
+  grants users reproduction and distribution rights. This is the basis used for
+  redistributing the original PyPI wheel, not an MIT/GPL license for the codec.
+  The original, SHA256-verified wheel is provided alongside the application in
+  the release. See [distribution details](third-party/cricodecs/DISTRIBUTION.md).
 
-Do not publish a locally assembled full-runtime archive without first resolving
-all third-party redistribution requirements. `Publish-Portable.ps1 -Zip` builds
-the public standard package; `-WithVideoRuntime` is an explicit local-only mode.
+`Publish-Portable.ps1 -Zip` builds the full-runtime edition and fails if required
+components or notices are missing. Keep all original notices and source
+directions when mirroring it. Changes to third-party code or versions require a
+new review of their terms; the project's own license does not relicense these
+components. `-WithoutVideoRuntime` explicitly builds the standard edition with
+first-use downloads. Never describe that standard archive as containing the
+video binaries.
 
 ## Scope of verification
 

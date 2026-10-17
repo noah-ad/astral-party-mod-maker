@@ -153,6 +153,46 @@ internal static class VideoSetupChecks
         check(true, "installed components start again offline from the user cache");
     }
 
+    public static async Task BundledSmokeAsync(string packageData, string work, Action<bool, string> check)
+    {
+        work = Path.GetFullPath(work);
+        if (Directory.Exists(work)) throw new IOException("Bundled smoke output must be a new directory.");
+        Directory.CreateDirectory(work);
+        object previousBase = AppContext.GetData("APP_CONTEXT_BASE_DIRECTORY"), previousCache = AppContext.GetData("JixModMaker.VideoRuntimeCache");
+        try
+        {
+            AppContext.SetData("APP_CONTEXT_BASE_DIRECTORY", Path.GetFullPath(packageData) + Path.DirectorySeparatorChar);
+            string cache = Path.Combine(work, "no-user-components");
+            AppContext.SetData("JixModMaker.VideoRuntimeCache", cache);
+            check(VideoRuntime.IsReady && VideoRuntime.Root == VideoRuntime.ScriptRoot && !Directory.Exists(cache),
+                "full package is ready with a completely empty per-user component cache");
+            check(VideoRuntimeDialog.EnsureReady(null), "first video does not open the download dialog in an offline full package");
+            await VideoRuntime.ValidateAsync(VideoRuntime.Root, CancellationToken.None);
+            check(true, "packaged FFmpeg and isolated Python/CriCodecs start without installed system tools");
+            var tools = PortraitVideoSettings.Load();
+            string input = Path.Combine(work, "test video.mp4");
+            await PortraitVideoConverter.RunAsync(tools.Ffmpeg, new[] { "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i",
+                "color=c=green:s=320x240:r=30,drawbox=x=80:y=40:w=120:h=140:color=red:t=fill", "-t", "1", "-c:v", "mpeg4", input }, CancellationToken.None);
+            var options = new PortraitVideoConverter.Options(true, Crop: VideoCrop.Fit(320, 240, 880, 1205));
+            string gif = Path.Combine(work, "preview.gif");
+            await PortraitVideoConverter.PreviewAnimationAsync(input, gif, tools, options, CancellationToken.None);
+            check(new FileInfo(gif).Length > 100, "full package produces a cropped, green-screen-removed GIF preview offline");
+            string usm = await PortraitVideoConverter.ConvertAsync(input, work, tools, options, CancellationToken.None);
+            check(File.ReadAllBytes(usm).AsSpan().StartsWith("CRID"u8), "full package converts MP4 into independent USM without downloads");
+            string metadata = Path.Combine(work, "movie.json");
+            await PortraitVideoConverter.RunAsync(VideoRuntime.PythonPath,
+                new[] { Path.Combine(VideoRuntime.ScriptRoot, "inspect_movie.py"), usm, metadata }, CancellationToken.None);
+            var timing = System.Text.Json.JsonSerializer.Deserialize<NativeMovieTiming>(await File.ReadAllTextAsync(metadata))!;
+            check(timing.HasAlpha && timing.TotalFrames == 30, "bundled inspector confirms alpha and a continuous 30-frame video");
+            check(!Directory.Exists(cache), "offline conversion never creates a download cache or per-user installation");
+        }
+        finally
+        {
+            AppContext.SetData("APP_CONTEXT_BASE_DIRECTORY", previousBase);
+            AppContext.SetData("JixModMaker.VideoRuntimeCache", previousCache);
+        }
+    }
+
     public static void Ui(string output, Action<bool, string> check)
     {
         Directory.CreateDirectory(output);

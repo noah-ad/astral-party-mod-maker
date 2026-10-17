@@ -18,12 +18,22 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot read expected package metadata.' }
 $launcher = $properties.PortableLauncherName + '.exe'
 if ($manifest.Version -ne $properties.Version -or $manifest.Launcher -ne $launcher -or
     $manifest.EditionLabel -ne $properties.PackageEditionLabel) { throw 'Package metadata does not match the project.' }
+if ($manifest.Edition -eq 'full' -and $manifest.VideoSetup -ne 'bundled') { throw 'Full video edition cannot require an upstream download.' }
 if (!$WorkDirectory) { $WorkDirectory = Join-Path $repo ('artifacts/portable-tests-' + [Guid]::NewGuid().ToString('N')) }
 if (Test-Path -LiteralPath $WorkDirectory) { throw "Test directory already exists: $WorkDirectory" }
 $work = (New-Item -ItemType Directory -Path $WorkDirectory).FullName
 $relocated = Join-Path $work ($properties.PortableLauncherName + ' moved package')
 Copy-Item -LiteralPath $package -Destination $relocated -Recurse
 $data = Join-Path $relocated 'data'
+if ($manifest.Edition -eq 'full') {
+    foreach ($relative in @('Tools/video/ffmpeg.exe', 'Tools/video/python/python.exe', 'Tools/video/python/python311.dll',
+        'Tools/video/python/LICENSE.txt', 'Tools/video/third-party/ffmpeg/LICENSE', 'Tools/video/third-party/ffmpeg/SOURCES.md',
+        'Tools/video/third-party/cricodecs/DISTRIBUTION.md', 'Tools/video/python/cricodecs-1.2.0.dist-info/METADATA')) {
+        if (!(Test-Path -LiteralPath (Join-Path $data $relative))) { throw "Offline package is missing $relative" }
+    }
+    & (Join-Path $data 'Tools/video/python/python.exe') -I -c 'from cricodecs import usm, video'
+    if ($LASTEXITCODE -ne 0) { throw 'Moved bundled video runtime does not start.' }
+}
 $entries = @(Get-ChildItem -LiteralPath $relocated -Force)
 if ($entries.Count -ne 2 -or !(Test-Path -LiteralPath (Join-Path $relocated $launcher)) -or
     (Test-Path -LiteralPath (Join-Path $data 'JixModMaker.exe'))) { throw 'Unexpected portable layout.' }

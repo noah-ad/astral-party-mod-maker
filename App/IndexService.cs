@@ -190,31 +190,26 @@ public class GameIndex
     public TexIndexEntry FindTextureTarget(string bundleName, string textureName, long pathId = 0)
     {
         if (string.IsNullOrWhiteSpace(bundleName)) return null;
-        var movie = Items.FirstOrDefault(i => i.Kind == ResourceKinds.SkillMovie &&
-            string.Equals(i.Bundle, bundleName, StringComparison.OrdinalIgnoreCase) &&
-            (pathId != 0 ? i.PathId == pathId || i.PathId == 0 && i.Name == textureName : i.Name == textureName));
-        if (movie != null) return movie;
+        var candidates = Items.Where(i => string.Equals(PackService.BundleKey(i.Bundle), PackService.BundleKey(bundleName), StringComparison.OrdinalIgnoreCase)
+            && (string.IsNullOrWhiteSpace(textureName) ? pathId != 0 && i.PathId == pathId : i.Name == textureName)).ToList();
+        var exact = candidates.FirstOrDefault(i => pathId != 0 && i.PathId == pathId) ?? (candidates.Count == 1 ? candidates[0] : null);
+        if (exact != null || !Lightweight) return exact;
 
-        if (!Lightweight)
-            return Items.FirstOrDefault(i =>
-                string.Equals(i.Bundle, bundleName, StringComparison.OrdinalIgnoreCase)
-                && (pathId != 0 && i.PathId == pathId
-                    || pathId == 0 && string.Equals(i.Name, textureName, StringComparison.Ordinal)));
-
-        if (TextureNamesByBundle == null
-            || !TextureNamesByBundle.TryGetValue(bundleName, out var names)
-            || names == null
+        var bundle = TextureNamesByBundle?.FirstOrDefault(pair => string.Equals(PackService.BundleKey(pair.Key),
+            PackService.BundleKey(bundleName), StringComparison.OrdinalIgnoreCase)) ?? default;
+        var names = bundle.Value;
+        if (names == null
             || !names.Any(n => string.Equals(n, textureName, StringComparison.Ordinal)))
             return null;
 
         string bundlePath = "";
         string source = "";
-        BundlePathsByName?.TryGetValue(bundleName, out bundlePath);
-        BundleSourcesByName?.TryGetValue(bundleName, out source);
+        BundlePathsByName?.TryGetValue(bundle.Key, out bundlePath);
+        BundleSourcesByName?.TryGetValue(bundle.Key, out source);
         var catId = ResourceCategories.Categorize(ResourceKinds.Texture, textureName);
         var entry = new TexIndexEntry
         {
-            Bundle = bundleName,
+            Bundle = bundle.Key,
             BundlePath = bundlePath,
             Source = source,
             PathId = 0,

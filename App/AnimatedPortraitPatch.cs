@@ -19,7 +19,7 @@ public static class AnimatedPortraitPatch
     private const string GraphAttachHelperName = "JixCanAttachCardGraph";
 
     public sealed record Request(string Root, string RuntimeBundle, string VideoBundle, string TextureName, string UsmFile, string Destination,
-        bool Independent = false);
+        bool Independent = false, string GameDirectory = null);
     public sealed record Result(string ReplacementZip, string RestoreZip, string VideoKey, string Platform);
 
     public static bool IsCharacterPortrait(string name) => name != null &&
@@ -463,9 +463,12 @@ public static class AnimatedPortraitPatch
     }
 
     public static (string Runtime, string Video) FindBundles(string root, CancellationToken cancellationToken,
-        IProgress<int> progress = null, bool runtimeOnly = false)
+        IProgress<int> progress = null, bool runtimeOnly = false, string gameDirectory = null)
     {
-        string runtime = null;
+        cancellationToken.ThrowIfCancellationRequested();
+        string runtime = RuntimeBundleLocator.Resolve(root, gameDirectory)?.Path;
+        if (runtimeOnly && runtime != null) return (runtime, null);
+        var runtimeCandidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         string video = null;
         var manager = Manager();
         int scanned = 0;
@@ -483,7 +486,6 @@ public static class AnimatedPortraitPatch
                 {
                     var bundle = manager.LoadBundleFile(path.FullName);
                     var file = manager.LoadAssetsFileFromBundle(bundle, 0, false);
-                    if (!file.file.Metadata.UnityVersion.StartsWith("2021.", StringComparison.Ordinal)) continue;
                     foreach (var info in file.file.AssetInfos)
                     {
                         bool textAsset = info.TypeId == (int)AssetClassID.TextAsset;
@@ -493,14 +495,19 @@ public static class AnimatedPortraitPatch
                         int length = reader.ReadInt32();
                         if (length < 0 || length > 256 || length + (textAsset ? 4 : 32) > info.ByteSize) continue;
                         string name = Encoding.UTF8.GetString(reader.ReadBytes(length));
-                        if (textAsset && name == "AstralParty.Runtime.dll") runtime ??= path.FullName;
+                        if (textAsset && name == "AstralParty.Runtime.dll") runtimeCandidates.Add(path.FullName);
                         if (!textAsset && name == VideoSlot) video ??= path.FullName;
                     }
                 }
                 catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException) { }
                 finally { manager.UnloadAll(); }
                 if (++scanned % 25 == 0) progress?.Report(scanned);
-                if (runtime != null && (runtimeOnly || video != null)) break;
+                if (runtime != null && video != null) break;
+            }
+            if (runtime == null)
+            {
+                if (runtimeCandidates.Count > 1) throw new InvalidDataException("发现多个版本的热更新程序集，无法确定当前加载的资源包。请从当前游戏目录进入动态替换。");
+                runtime = runtimeCandidates.SingleOrDefault();
             }
             return (runtime, video);
         }

@@ -19,6 +19,14 @@ public class MainForm : Form
     private bool _includeHotCache;
     private bool _recursiveFolder;
     private ModManifest _ws = new();
+    private ModificationCatalog _modifications;
+    private CancellationTokenSource _modVerification;
+    private int _modVerificationSeq;
+    private int _folderSeq;
+    private bool _reloadIndexRequested;
+    private bool _pendingRebuild;
+    private bool _pendingAdvancedTypes;
+    private string _modVerificationInfo = "修改状态尚未核验";
     private TexRef _selectedAsset;
     private int _loadSeq;
     private int _previewSeq;
@@ -116,6 +124,7 @@ public class MainForm : Form
     private readonly Label _pathLabel = Theme.Caption("");
     private readonly PictureBox _preview = new() { Dock = DockStyle.Top, Height = 210, BackColor = Theme.PicBg, SizeMode = PictureBoxSizeMode.Zoom };
     private readonly Label _detailTitle = Theme.Caption("未选择资源", true);
+    private readonly Label _detailState = Theme.Caption("");
     private readonly Label _detailMeta = Theme.Caption("");
     private readonly Label _detailPath = Theme.Caption("");
     private readonly Label _detailHint = Theme.Caption("");
@@ -619,7 +628,7 @@ public class MainForm : Form
             Margin = Padding.Empty
         };
         details.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        foreach (var label in new[] { _detailTitle, _detailMeta, _detailPath, _detailHint })
+        foreach (var label in new[] { _detailTitle, _detailState, _detailMeta, _detailPath, _detailHint })
         {
             label.Dock = DockStyle.Top;
             label.AutoSize = true;
@@ -666,7 +675,7 @@ public class MainForm : Form
         ConfigurePreviewDragDrop();
 
         _preview.Margin = new Padding(0, 0, 0, 12);
-        foreach (var control in new Control[] { _preview, _detailTitle, buttons, _detailMeta, _detailPath, _detailHint })
+        foreach (var control in new Control[] { _preview, _detailTitle, _detailState, buttons, _detailMeta, _detailPath, _detailHint })
         {
             details.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             details.Controls.Add(control, 0, details.Controls.Count);
@@ -835,11 +844,11 @@ public class MainForm : Form
         int total = _index?.AssetCount ?? 0;
         int bundleCount = _index?.BundleCount ?? 0;
         int textureCount = _index?.CountKind(ResourceKinds.Texture) ?? 0;
-        int modified = _ws?.Entries.Count ?? 0;
+        int modified = CurrentModEntries().Count;
         var cacheState = _index == null ? "未加载" : $"{(_index.Lightweight ? "轻量索引" : "完整索引")} / {_index.BuiltAt}";
 
         AddPageCard("状态概览",
-            $"游戏目录: {(_folder ?? "未检测")}\nBundle: {bundleCount}\n资源: {total}，贴图: {textureCount}\n已改贴图: {modified}\n索引: {cacheState}",
+            $"游戏目录: {(_folder ?? "未检测")}\nBundle: {bundleCount}\n资源: {total}，贴图: {textureCount}\n当前修改 / 待核验: {modified}，保留记录: {_ws.Entries.Count}\n{_modVerificationInfo}\n索引: {cacheState}",
             MakeButton("检测游戏", (_, _) => DetectGame()),
             MakeButton("打开游戏目录", (_, _) => OpenGameDir()),
             MakeButton("启动游戏", (_, _) => LaunchGame()),
@@ -862,26 +871,31 @@ public class MainForm : Form
     {
         ClearFlow();
         ClearSideList();
+        var current = CurrentModEntries();
 
         AddPageCard("作品 / 导出",
-            $"当前作品集记录 {_ws?.Entries.Count ?? 0} 项。导出图包会重新解码当前贴图；导出 bundle ZIP 会直接压缩被修改过的资源包。",
+            $"当前修改 / 待核验 {current.Count} 项，保留记录 {_ws.Entries.Count} 项。\n{_modVerificationInfo}"
+                + (string.IsNullOrWhiteSpace(_ws.LoadNotice) ? "" : "\n" + _ws.LoadNotice),
             MakeButton("导入图包", (_, _) => ImportPack()),
             MakeButton("导出图包", (_, _) => ExportPack()),
             MakeButton("导出已改Bundle ZIP", (_, _) => ExportModifiedBundlesZip()),
+            MakeButton("重新核验修改", (_, _) => VerifyModificationsAsync(reloadWorkspace: true)),
             MakeButton("打开资源目录", (_, _) => OpenFolderInExplorer()));
 
-        if (_ws == null || _ws.Entries.Count == 0)
+        if (current.Count == 0)
         {
-            AddPageCard("空作品集", "还没有通过本工具替换过贴图。到资源浏览页选择卡片，替换后会自动写入这里。", MakeButton("去资源浏览", (_, _) => Navigate(PageBrowse)));
+            AddPageCard("当前没有可导出的修改", _ws.Entries.Count == 0
+                ? "尚无修改记录；有原始备份的资源会在后台比对并恢复记录。"
+                : "旧记录已保留。与备份一致或已不在当前索引中的资源不会列入本次导出。", MakeButton("去资源浏览", (_, _) => Navigate(PageBrowse)));
             return;
         }
 
-        var rows = _ws.Entries
+        var rows = current
             .OrderBy(e => e.Label)
             .ThenBy(e => e.TextureName)
             .Take(24)
             .ToList();
-        AddHeader($"已记录替换 {rows.Count}/{_ws.Entries.Count}");
+        AddHeader($"当前修改 / 待核验 {rows.Count}/{current.Count}");
         foreach (var entry in rows)
         {
             var asset = FindAssetForEntry(entry);
@@ -911,7 +925,8 @@ public class MainForm : Form
             MakeButton("回到资源浏览", (_, _) => Navigate(PageBrowse)));
 
         AddPageCard("维护",
-            "还原使用 _原始备份；迁移旧 Mod 会另写 _迁移结果，不覆盖原目录。",
+            _modVerificationInfo,
+            MakeButton("重新核验修改", (_, _) => VerifyModificationsAsync(reloadWorkspace: true)),
             MakeButton("导出已改Bundle ZIP", (_, _) => ExportModifiedBundlesZip()),
             MakeButton("迁移旧Mod", (_, _) => MigrateOldMods()),
             MakeButton("全部还原", (_, _) => RestoreAll()));
@@ -1118,7 +1133,7 @@ public class MainForm : Form
             ExportBundleZip(new[] { target }, entry.TextureName ?? entry.Bundle ?? "bundle");
         }, 140));
 
-        var main = Theme.Caption($"{entry.TextureName}\n{entry.Label} · {entry.Bundle} · PathId {entry.PathId}");
+        var main = Theme.Caption($"{entry.TextureName}\n{ModificationCatalog.ShortLabel(asset?.Modification ?? ModificationState.Recorded)} · {entry.Label} · {entry.Bundle}");
         main.TextAlign = ContentAlignment.MiddleLeft;
         main.AutoEllipsis = true;
 
@@ -1159,6 +1174,11 @@ public class MainForm : Form
 
     private void SetFolder(string path, bool includeHotCache, bool recursive)
     {
+        StopModificationVerification();
+        _folderSeq++;
+        _modifications = null;
+        _index = null;
+        _modVerificationInfo = "载入索引后将核验修改记录";
         _folder = ResourceLocator.NormalizeGameDirectory(path);
         _includeHotCache = includeHotCache;
         _recursiveFolder = recursive;
@@ -1228,7 +1248,13 @@ public class MainForm : Form
 
     private async void LoadIndexAsync(bool rebuild, bool includeAdvancedTypes = false)
     {
-        if (_loadingIndex) return;
+        if (_loadingIndex)
+        {
+            _reloadIndexRequested = true;
+            _pendingRebuild |= rebuild;
+            _pendingAdvancedTypes |= includeAdvancedTypes;
+            return;
+        }
         if (_folder == null)
         {
             DetectGame();
@@ -1236,6 +1262,11 @@ public class MainForm : Form
         }
 
         _loadingIndex = true;
+        StopModificationVerification();
+        string folder = _folder;
+        bool includeHot = _includeHotCache;
+        bool recursive = _recursiveFolder;
+        int folderSeq = _folderSeq;
         try
         {
         ClearFlow();
@@ -1243,42 +1274,158 @@ public class MainForm : Form
         ClearDetails();
         if (includeAdvancedTypes) IndexService.ClearHotBundleCache();
 
-        _index = includeAdvancedTypes || rebuild
+        var index = includeAdvancedTypes || rebuild
             ? null
-            : await Task.Run(() => _indexSvc.Load(_folder, heroOnly: false, includeHotCache: _includeHotCache, recursive: _recursiveFolder));
-        if (_index == null)
+            : await Task.Run(() => _indexSvc.Load(folder, heroOnly: false, includeHotCache: includeHot, recursive: recursive));
+        if (index == null)
         {
-            string folder = _folder;
-            bool includeHot = _includeHotCache;
-            bool recursive = _recursiveFolder;
+            if (IsDisposed || folderSeq != _folderSeq) return;
             _status.Text = includeHot ? "扫描基础包 + 热更缓存..." : "递归扫描资源文件夹...";
-            _index = await Task.Run(() => _indexSvc.Build(folder, (done, total) =>
+            index = await Task.Run(() => _indexSvc.Build(folder, (done, total) =>
             {
                 if (done % 100 == 0 && IsHandleCreated)
-                    BeginInvoke(() => _status.Text = $"扫描资源索引... {done}/{total}");
+                    BeginInvoke(() => { if (folderSeq == _folderSeq) _status.Text = $"扫描资源索引... {done}/{total}"; });
             }, heroOnly: false, includeHotCache: includeHot, recursive: recursive, includeAdvancedTypes: includeAdvancedTypes));
-            try { await Task.Run(() => _indexSvc.Save(_index)); } catch { }
+            try { await Task.Run(() => _indexSvc.Save(index)); } catch { }
         }
         else
         {
-            _status.Text = _index.Lightweight
-                ? $"已使用轻量贴图索引：{_index.LightweightTextureCount} 项 / {_index.BundleCount} 包"
-                : $"已使用缓存索引：{_index.AssetCount} 项 / {_index.BundleCount} 包";
+            if (IsDisposed || folderSeq != _folderSeq) return;
+            _status.Text = index.Lightweight
+                ? $"已使用轻量贴图索引：{index.LightweightTextureCount} 项 / {index.BundleCount} 包"
+                : $"已使用缓存索引：{index.AssetCount} 项 / {index.BundleCount} 包";
         }
 
+        if (IsDisposed || folderSeq != _folderSeq) return;
+        var modifications = await Task.Run(() => new ModificationCatalog(index));
+        if (IsDisposed || folderSeq != _folderSeq) return;
+        _index = index;
+        _ws = PackService.LoadWorkspace(folder);
+        _modifications = modifications;
         UpdateDashboard();
         ShowCurrentPage();
+        VerifyModificationsAsync();
         }
-        catch (Exception ex) { _status.Text = "索引加载失败：" + ex.Message; }
-        finally { _loadingIndex = false; }
+        catch (Exception ex) { if (!IsDisposed && folderSeq == _folderSeq) _status.Text = "索引加载失败：" + ex.Message; }
+        finally
+        {
+            _loadingIndex = false;
+            if (_reloadIndexRequested && !IsDisposed)
+            {
+                bool nextRebuild = _pendingRebuild, nextAdvanced = _pendingAdvancedTypes;
+                _reloadIndexRequested = _pendingRebuild = _pendingAdvancedTypes = false;
+                LoadIndexAsync(nextRebuild, nextAdvanced);
+            }
+        }
+    }
+
+    private void StopModificationVerification()
+    {
+        _modVerificationSeq++;
+        _modVerification?.Cancel();
+        _modVerification = null;
+    }
+
+    private async void VerifyModificationsAsync(bool reloadWorkspace = false)
+    {
+        if (_modifications == null || _index == null) return;
+        StopModificationVerification();
+        if (reloadWorkspace) _ws = PackService.LoadWorkspace(_folder);
+        var catalog = _modifications;
+        var workspace = _ws;
+        string folder = _folder;
+        int seq = _modVerificationSeq;
+        var cancellation = new CancellationTokenSource();
+        _modVerification = cancellation;
+        _modVerificationInfo = "正在后台核验原始备份，资源可正常浏览"
+            + (string.IsNullOrWhiteSpace(workspace.LoadNotice) ? "" : "；" + workspace.LoadNotice);
+        RefreshModificationViews();
+        var progress = new Progress<(int done, int total)>(value =>
+        {
+            if (seq == _modVerificationSeq && !IsDisposed)
+                _status.Text = $"后台核验修改... {value.done}/{value.total}";
+        });
+        try
+        {
+            var result = await Task.Run(() => catalog.Scan((done, total) =>
+            {
+                if (done % 100 == 0) ((IProgress<(int, int)>)progress).Report((done, total));
+            }, cancellation.Token));
+            if (IsDisposed || cancellation.IsCancellationRequested || seq != _modVerificationSeq
+                || !ReferenceEquals(catalog, _modifications) || !ReferenceEquals(workspace, _ws)) return;
+            int repaired = PackService.MergeRecovered(workspace, result.Recovered);
+            string saveError = null;
+            if (repaired > 0)
+            {
+                try { PackService.SaveWorkspace(folder, workspace); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { saveError = ex.Message; }
+            }
+            _modVerificationInfo = $"已核验 {result.VerifiedBundles + result.ReusedBundles} 个有备份的资源包，恢复 / 更新 {repaired} 条记录"
+                + (result.FailedBundles > 0 ? $"；{result.FailedBundles} 包未能核验，保留原记录" : "")
+                + (saveError == null ? "" : "；记录尚未保存：" + saveError)
+                + (result.CacheNotice == null ? "" : "；" + result.CacheNotice)
+                + (string.IsNullOrWhiteSpace(workspace.LoadNotice) ? "" : "；" + workspace.LoadNotice);
+            RefreshModificationViews();
+            _status.Text = _modVerificationInfo;
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (!IsDisposed && seq == _modVerificationSeq)
+            {
+                _modVerificationInfo = "核验未完成，旧记录已保留：" + ex.Message;
+                _status.Text = _modVerificationInfo;
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_modVerification, cancellation)) _modVerification = null;
+            cancellation.Dispose();
+        }
+    }
+
+    private List<ModEntry> CurrentModEntries() => _modifications?.CurrentEntries(_ws) ?? new();
+
+    private void ApplyModificationState(TexRef asset)
+    {
+        bool recorded = PackService.Contains(_ws, asset.BundleName, asset.PathId, asset.Name);
+        asset.Modification = _modifications?.GetState(asset.BundlePath, asset.Name, recorded)
+            ?? (recorded ? ModificationState.Recorded : ModificationState.Unverified);
+        asset.Modded = asset.Modification is ModificationState.Modified or ModificationState.Recorded;
+    }
+
+    private void UpdateCardModification(RoundedCard card)
+    {
+        if (card.IsDisposed || card.Tag is not TexRef asset) return;
+        ApplyModificationState(asset);
+        card.SetFill(asset.Modded ? Theme.CardMod : Theme.Card);
+        card.GradientFill = asset.Modded ? Theme.CardAlt : Color.FromArgb(43, 42, 91);
+        card.Controls[1].Text = CardText(asset);
+    }
+
+    private void RefreshModificationViews()
+    {
+        UpdateDashboard();
+        foreach (var card in _flow.Controls.OfType<RoundedCard>()) UpdateCardModification(card);
+        foreach (ListViewItem item in _resourceList.Items)
+        {
+            if (item.Tag is not TexRef asset) continue;
+            ApplyModificationState(asset);
+            item.ToolTipText = $"{asset.Name}\n{ModificationCatalog.Label(asset.Modification)}\n{asset.BundlePath}";
+            item.BackColor = asset.Modded ? Theme.CardMod : Theme.FlowBg;
+        }
+        if (_selectedAsset != null) UpdateDetailText(_selectedAsset);
+        if (_activePage == PagePack) ShowPackPage();
+        else if (_activePage == PageDashboard) ShowDashboardPage();
+        else if (_activePage == PageTools) ShowToolsPage();
     }
 
     private void UpdateDashboard()
     {
         int total = _index?.AssetCount ?? 0;
         int bundles = _index?.BundleCount ?? 0;
-        int modified = _ws?.Entries.Count ?? 0;
-        _metricLabel.Text = $"BUNDLES {bundles}  ASSETS {total}  MODDED {modified}";
+        int modified = CurrentModEntries().Count;
+        _metricLabel.Text = $"资源包 {bundles}  资源 {total}  修改 / 待核验 {modified}";
         _pathLabel.Text = _folder == null ? "未连接游戏目录" : _folder;
     }
 
@@ -1763,7 +1910,7 @@ public class MainForm : Form
 
     private TexRef ToTexRef(TexIndexEntry e)
     {
-        return new TexRef
+        var asset = new TexRef
         {
             BundlePath = e.BundlePath,
             BundleName = e.Bundle,
@@ -1780,9 +1927,10 @@ public class MainForm : Form
             OwnerHeroId = e.OwnerHeroId,
             OwnerVariant = e.OwnerVariant,
             OwnerIsMonster = e.OwnerIsMonster,
-            Display = DisplayName(e),
-            Modded = ResourceKinds.InBrowser(e.Kind, ResourceKinds.Texture) && PackService.Contains(_ws, e.Bundle, e.PathId, e.Name)
+            Display = DisplayName(e)
         };
+        ApplyModificationState(asset);
+        return asset;
     }
 
     private string DisplayName(TexIndexEntry e)
@@ -2067,7 +2215,7 @@ public class MainForm : Form
                 var item = new ListViewItem(asset.Display ?? asset.Name, group)
                 {
                     Tag = asset,
-                    ToolTipText = $"{asset.Name}\n{asset.BundleName}\n{asset.BundlePath}"
+                    ToolTipText = $"{asset.Name}\n{ModificationCatalog.Label(asset.Modification)}\n{asset.BundleName}\n{asset.BundlePath}"
                 };
                 item.SubItems.Add(ResourceListGroupLabel(asset));
                 item.SubItems.Add(asset.IsTexture
@@ -2159,6 +2307,7 @@ public class MainForm : Form
             {
                 if (card.IsDisposed) continue;
                 var asset = (TexRef)card.Tag;
+                UpdateCardModification(card);
                 if (!previews.TryGetValue(asset.PathId, out var png)) continue;
                 SetCardThumbnail(card, png);
                 done++;
@@ -2191,7 +2340,6 @@ public class MainForm : Form
             asset.Width = found.Width;
             asset.Height = found.Height;
             asset.Format = found.Format;
-            asset.Modded = PackService.Contains(_ws, asset.BundleName, asset.PathId);
         }
     }
 
@@ -2366,7 +2514,7 @@ public class MainForm : Form
         var size = asset.IsVisual
             ? asset.Width > 0 && asset.Height > 0 ? $"{asset.Width}x{asset.Height}" : "点选预览"
             : ResourceKinds.Label(asset.Kind);
-        return $"{asset.Display ?? asset.Name}\n{size}";
+        return $"{asset.Display ?? asset.Name}\n{ModificationCatalog.ShortLabel(asset.Modification)} · {size}";
     }
 
     private void PaintCardActions(Graphics g, Rectangle bounds, bool enabled)
@@ -2456,9 +2604,18 @@ public class MainForm : Form
 
     private void UpdateDetailText(TexRef asset)
     {
+        ApplyModificationState(asset);
         _detailTitle.Text = asset.Name;
         if (asset.IsSkillMovie && asset.MovieTiming != null)
             _detailTitle.Text += $"\n原技能 {asset.MovieTiming.Duration:0.###} 秒 · {asset.MovieTiming.TotalFrames} 帧";
+        _detailState.Text = ModificationCatalog.Label(asset.Modification);
+        _detailState.ForeColor = asset.Modification switch
+        {
+            ModificationState.Modified => Theme.AccentSoft,
+            ModificationState.Original => Theme.Good,
+            ModificationState.Recorded => Theme.Warn,
+            _ => Theme.SubText
+        };
         var path = ShortDisplayPath(asset.BundlePath);
         _detailMeta.Text =
             $"类型: {ResourceKinds.Label(asset.Kind)}\n" +
@@ -2494,7 +2651,6 @@ public class MainForm : Form
         asset.Width = found.Width;
         asset.Height = found.Height;
         asset.Format = found.Format;
-        asset.Modded = PackService.Contains(_ws, asset.BundleName, asset.PathId);
         return true;
     }
 
@@ -2527,6 +2683,7 @@ public class MainForm : Form
         if (!asset.IsTexture || asset.PathId == 0) return;
         int seq = ++_previewSeq;
         string root = AnimatedPortraitRoot();
+        string gameDirectory = _folder;
         Task.Run(() =>
         {
             string state = null;
@@ -2541,13 +2698,14 @@ public class MainForm : Form
                 var receipt = PortraitReplacement.ReadReceipt(root, asset.Name);
                 if (receipt?.Texture == asset.Name)
                 {
-                    if (PortraitReplacement.IsInstalled(root, receipt))
+                    var binding = PortraitReplacement.CheckCurrentBinding(root, receipt, gameDirectory);
+                    if (binding.Current)
                     {
-                        state = "动态资源已写入并校验 · " + receipt.SourceName + " · 本地预览（前 6 秒），游戏内效果待确认";
+                        state = binding.Message + "\n本地预览（前 6 秒）：" + receipt.SourceName;
                         if (File.Exists(receipt.Preview)) return (Bytes: File.ReadAllBytes(receipt.Preview), State: state, Animated: true);
                         state += " · 预览文件缺失";
                     }
-                    else state = "动态替换记录已失效：资源已更新或重置，当前显示静态贴图";
+                    else state = binding.Message;
                 }
                 return (Bytes: _engine.DecodePng(asset.BundlePath, asset.PathId, Sc(620)), State: state, Animated: false);
             }
@@ -2654,6 +2812,8 @@ public class MainForm : Form
                 cropped = crop.ResultPng;
             }
 
+            StopModificationVerification();
+            _modifications?.Invalidate(asset.BundlePath);
             _status.Text = $"替换 {asset.Name} ...";
             if (cropped != null)
                 _engine.ReplaceInPlaceFromBytes(asset.BundlePath, asset.PathId, cropped, _backupDir, asset.BundleName);
@@ -2683,7 +2843,8 @@ public class MainForm : Form
                 card.SetFill(Theme.CardMod);
             }
             SelectAsset(asset, null);
-            UpdateDashboard();
+            RefreshModificationViews();
+            VerifyModificationsAsync();
             _status.Text = $"已替换 {asset.Name}，原始资源已备份。";
         }
         catch (Exception ex)
@@ -2788,7 +2949,13 @@ public class MainForm : Form
             return;
         }
 
-        using var selection = new ExportSelectionDialog(_ws.Entries, true);
+        var current = CurrentModEntries();
+        if (current.Count == 0)
+        {
+            MessageBox.Show(this, "当前没有可关联到现有资源的修改。旧记录已保留，请等待后台核验或重新核验修改。", "没有可导出的修改");
+            return;
+        }
+        using var selection = new ExportSelectionDialog(current, true);
         if (selection.ShowDialog(this) != DialogResult.OK) return;
         var assets = selection.SelectedEntries
             .Select(e =>
@@ -2868,7 +3035,7 @@ public class MainForm : Form
         if (!IsAnimatedPortraitCandidate(asset)) return;
         if (!EnsureTextureReady(asset)) return;
         string root = AnimatedPortraitRoot();
-        using var dialog = new AnimatedPortraitDialog(root, asset.Name, videoFile, new Size(asset.Width, asset.Height));
+        using var dialog = new AnimatedPortraitDialog(root, asset.Name, videoFile, new Size(asset.Width, asset.Height), _folder);
         dialog.ShowDialog(this);
         _status.Text = dialog.ResultMessage.Replace('\n', ' ');
         if (_selectedAsset == asset)
@@ -2911,8 +3078,11 @@ public class MainForm : Form
             }
             if (dialog.Replaced || dialog.Restored)
             {
+                StopModificationVerification();
+                _modifications?.Invalidate(asset.BundlePath);
                 PackService.SaveWorkspace(_folder, _ws);
-                UpdateDashboard();
+                RefreshModificationViews();
+                VerifyModificationsAsync();
                 if (_selectedAsset == asset)
                 {
                     UpdateDetailText(asset);
@@ -2961,8 +3131,11 @@ public class MainForm : Form
             }
             if (dialog.Replaced || dialog.Restored)
             {
+                StopModificationVerification();
+                _modifications?.Invalidate(asset.BundlePath);
                 PackService.SaveWorkspace(_folder, _ws);
-                UpdateDashboard();
+                RefreshModificationViews();
+                VerifyModificationsAsync();
                 var cards = _flow.Controls.OfType<RoundedCard>().Where(card => card.Tag is TexRef target &&
                     target.BundlePath == asset.BundlePath && target.Name == asset.Name).ToList();
                 foreach (var card in cards)
@@ -2986,8 +3159,9 @@ public class MainForm : Form
         finally { _openingSkillMovie = false; }
     }
 
-    private string AnimatedPortraitRoot() => string.Equals(Path.GetFileName(_folder), "StandaloneWindows64", StringComparison.OrdinalIgnoreCase)
-        && Directory.Exists(_index?.HotDir) ? _index.HotDir : _folder;
+    private string AnimatedPortraitRoot() => PortraitReplacement.FindRoot(
+        string.Equals(Path.GetFileName(_folder), "StandaloneWindows64", StringComparison.OrdinalIgnoreCase)
+            && Directory.Exists(_index?.HotDir) ? _index.HotDir : _folder, _folder);
 
     private PortraitReplacement.Receipt SelectedDynamicReceipt() => AnimatedPortraitPatch.IsSupportedTarget(_selectedAsset?.Name) && !string.IsNullOrWhiteSpace(_folder)
         ? PortraitReplacement.ReadReceipt(AnimatedPortraitRoot(), _selectedAsset.Name) : null;
@@ -3020,6 +3194,8 @@ public class MainForm : Form
                 $"还原 {asset.Name} 所在资源包？\n\n该包会恢复到首次备份的版本，同包中的其他修改也会撤销。其他资源包不动。",
                 "还原当前资源包", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.OK) return;
             _status.Text = "正在还原并校验资源包...";
+            StopModificationVerification();
+            _modifications?.Invalidate(asset.BundlePath);
             await Task.Run(() =>
             {
                 if (asset.IsSkillMovie)
@@ -3037,6 +3213,7 @@ public class MainForm : Form
             ResetBrowseState();
             if (_activePage == PageBrowse) ShowCurrentAssets();
             if (_selectedAsset == asset) { UpdateDetailText(asset); LoadPreviewAsync(asset, null); }
+            VerifyModificationsAsync();
             _status.Text = "已还原并校验：" + asset.Name;
         }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "还原未完成", MessageBoxButtons.OK, MessageBoxIcon.Error); }
@@ -3079,6 +3256,7 @@ public class MainForm : Form
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        StopModificationVerification();
         _moviePreview?.Cancel();
         if (_preview != null)
         {
@@ -3090,8 +3268,21 @@ public class MainForm : Form
         base.OnFormClosed(e);
     }
 
-    private void ExportBundleZip(IEnumerable<TexRef> assets, string defaultName)
+    protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        if (_exportingBundles)
+        {
+            e.Cancel = true;
+            _status.Text = "ZIP 正在导出，完成后即可关闭窗口";
+        }
+        base.OnFormClosing(e);
+    }
+
+    private bool _exportingBundles;
+
+    private async void ExportBundleZip(IEnumerable<TexRef> assets, string defaultName)
+    {
+        if (_exportingBundles) return;
         var bundles = assets
             .Where(a => a != null && !string.IsNullOrWhiteSpace(a.BundlePath) && File.Exists(a.BundlePath))
             .GroupBy(a => a.BundlePath, StringComparer.OrdinalIgnoreCase)
@@ -3103,36 +3294,50 @@ public class MainForm : Form
             return;
         }
 
-        using var dlg = new SaveFileDialog
-        {
-            Filter = "Bundle 压缩包|*.zip",
-            FileName = SafeFileName(defaultName) + ".zip"
-        };
-        if (dlg.ShowDialog() != DialogResult.OK) return;
-
         try
         {
-            string root = new[] { _folder, _index?.HotDir }.Where(Directory.Exists)
-                .FirstOrDefault(candidate => bundles.All(asset =>
-                {
-                    string relative = Path.GetRelativePath(candidate, asset.BundlePath);
-                    return !Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar);
-                }));
-            if (root == null) throw new InvalidOperationException("选中的资源分别位于游戏基础目录和热更缓存，请按来源分别导出，以保留可直接覆盖的目录结构。");
-            int files = ReplacementZip.Export(root, bundles.Select(b => b.BundlePath), dlg.FileName);
-            _status.Text = $"已导出直接替换 ZIP：{files} 个文件";
-            MessageBox.Show($"导出成功，共 {files} 个文件。\n解压到目标设备对应的资源根目录即可覆盖。\n请使用目标手机版本的资源制作 Mod；导出不会转换 PC / 手机资源格式。", "导出成功");
+            var sources = new[]
+            {
+                new ReplacementZip.Source(_folder, "基础资源"),
+                new ReplacementZip.Source(_index?.HotDir, "热更新缓存")
+            };
+            var paths = bundles.Select(bundle => bundle.BundlePath).ToArray();
+            bool mixed = ReplacementZip.Plan(sources, paths, Path.Combine(Path.GetTempPath(), "export.zip")).Count > 1;
+            using var dlg = new SaveFileDialog
+            {
+                Title = mixed ? "导出到此位置（自动生成基础资源、热更新缓存两个 ZIP）" : "导出 Bundle ZIP",
+                Filter = "Bundle 压缩包|*.zip",
+                FileName = SafeFileName(defaultName) + ".zip",
+                OverwritePrompt = false
+            };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            var parts = ReplacementZip.Plan(sources, paths, dlg.FileName);
+            var existing = parts.Where(part => File.Exists(part.Destination)).Select(part => part.Destination).ToList();
+            if (existing.Count > 0 && MessageBox.Show(this, "以下文件已存在，是否替换？\n\n" + string.Join("\n", existing),
+                "替换导出文件", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            _exportingBundles = true;
+            _status.Text = mixed ? "正在按来源导出两个 ZIP..." : "正在导出 Bundle ZIP...";
+            var result = await Task.Run(() => ReplacementZip.Export(parts));
+            if (IsDisposed) return;
+            int files = result.Sum(part => part.Files);
+            _status.Text = $"已导出 {result.Count} 个直接替换 ZIP，共 {files} 个文件";
+            string locations = string.Join("\n\n", result.Select(part => $"{part.Label}（{part.Files} 个文件）\n{part.Destination}"));
+            MessageBox.Show(this, $"导出成功。\n\n{locations}\n\n"
+                + (mixed ? "基础资源 ZIP 解压到游戏基础资源目录；热更新缓存 ZIP 解压到 AssetBundles 根目录。" : "解压到对应的资源根目录即可覆盖。")
+                + "\nPC / 手机资源格式不会自动转换。", "导出成功");
         }
         catch (Exception ex)
         {
+            if (IsDisposed) return;
             MessageBox.Show($"导出 bundle ZIP 失败：{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             _status.Text = "导出 bundle ZIP 失败";
         }
+        finally { _exportingBundles = false; }
     }
 
     private TexRef FindAssetForEntry(ModEntry entry)
     {
-        var indexed = _index?.FindTextureTarget(entry.Bundle, entry.TextureName, entry.PathId);
+        var indexed = _modifications != null ? _modifications.Find(entry) : _index?.FindTextureTarget(entry.Bundle, entry.TextureName, entry.PathId);
         return indexed == null ? null : ToTexRef(indexed);
     }
 
@@ -3159,7 +3364,13 @@ public class MainForm : Form
             return;
         }
 
-        var textures = _ws.Entries.Where(entry => entry.Kind == ResourceKinds.Texture && !NameParser.IsSkillMovie(entry.TextureName)).ToArray();
+        var current = CurrentModEntries();
+        if (current.Count == 0)
+        {
+            MessageBox.Show(this, "当前没有可关联到现有资源的修改。旧记录已保留，请等待后台核验或重新核验修改。", "没有可导出的修改");
+            return;
+        }
+        var textures = current.Where(entry => entry.Kind == ResourceKinds.Texture && !NameParser.IsSkillMovie(entry.TextureName)).ToArray();
         if (textures.Length == 0)
         {
             MessageBox.Show(this, "技能特写是视频资源，请使用“导出已改Bundle ZIP”。", "导出视频资源");
@@ -3179,7 +3390,7 @@ public class MainForm : Form
                 if (asset != null && asset.PathId == 0)
                     HydrateTexture(asset);
                 string bundlePath = asset?.BundlePath ?? Path.Combine(_folder, e.Bundle);
-                long pathId = asset?.PathId > 0 ? asset.PathId : e.PathId;
+                long pathId = asset is { PathId: not 0 } ? asset.PathId : e.PathId;
                 if (!File.Exists(bundlePath) || string.IsNullOrEmpty(e.TextureName)) continue;
                 try
                 {
@@ -3217,6 +3428,7 @@ public class MainForm : Form
                 _index = _indexSvc.Load(_folder, heroOnly: false, includeHotCache: _includeHotCache, recursive: _recursiveFolder)
                     ?? await Task.Run(() => _indexSvc.Build(_folder, null, heroOnly: false, includeHotCache: _includeHotCache, recursive: _recursiveFolder));
 
+            StopModificationVerification();
             PackService.ImportResult res;
             if (PackService.PeekFormat(dlg.FileName) >= 2)
                 res = PackService.ImportV2(dlg.FileName, _index, _folder, _engine, _backupDir, _ws);
@@ -3224,8 +3436,15 @@ public class MainForm : Form
                 res = PackService.Import(dlg.FileName, _folder, _engine, _backupDir, _ws);
 
             PackService.SaveWorkspace(_folder, _ws);
+            if (_modifications == null) _modifications = new ModificationCatalog(_index);
+            foreach (var entry in _ws.Entries)
+            {
+                var target = _modifications.Find(entry);
+                if (target != null) _modifications.Invalidate(target.BundlePath);
+            }
             UpdateDashboard();
             ShowCurrentAssets();
+            VerifyModificationsAsync();
             string msg = $"图包「{res.PackName}」应用完成：\n\n成功匹配 {res.Applied} 张，写入 {res.Targets} 个位置";
             if (res.Missing > 0) msg += $"\n{res.Missing} 张未匹配（当前目录里没有对应立绘）";
             if (res.Missing > 0) msg += "\n\n可切换到另一个资源目录，再导入同一个图包继续覆盖。";
@@ -3295,6 +3514,7 @@ public class MainForm : Form
         }
 
         int n = 0;
+        StopModificationVerification();
         foreach (var backup in Directory.GetFiles(_backupDir))
         {
             var name = Path.GetFileName(backup);
@@ -3331,6 +3551,7 @@ public class MainForm : Form
         _preview.Image?.Dispose();
         _preview.Image = null;
         _detailTitle.Text = "未选择资源";
+        _detailState.Text = "";
         _detailMeta.Text = "";
         _detailPath.Text = "";
         _detailHint.Text = "";

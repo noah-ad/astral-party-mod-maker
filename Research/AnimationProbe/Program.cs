@@ -254,6 +254,19 @@ if (args[0] == "catalog")
     {
         var fields = Enumerable.Range(0, 7).Select(c => Int(entries, 4 + id * 28 + c * 4)).ToArray();
         Console.WriteLine(new string(' ', depth * 2) + $"{id}: {root.GetProperty("m_InternalIds")[fields[0]]} TYPE={root.GetProperty("m_resourceTypes")[fields[6]]}");
+        if (args.Length > 3 && args[3] == "options" && fields[4] >= 0)
+        {
+            var extra = Bytes("m_ExtraDataString");
+            int p = fields[4];
+            if (p < extra.Length && extra[p++] == 7)
+            {
+                int assemblyLength = extra[p++]; p += assemblyLength;
+                int classLength = extra[p++];
+                string className = Encoding.UTF8.GetString(extra, p, classLength); p += classLength;
+                int jsonLength = Int(extra, p); p += 4;
+                Console.WriteLine("OPTIONS " + className + " " + Encoding.Unicode.GetString(extra, p, jsonLength));
+            }
+        }
         if (fields[2] >= 0 && depth < 2)
             foreach (int dep in all[fields[2]].entries) Show(dep, depth + 1);
     }

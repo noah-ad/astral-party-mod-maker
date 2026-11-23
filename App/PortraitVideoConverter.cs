@@ -104,7 +104,7 @@ public static class PortraitVideoConverter
         string color = Path.Combine(work, "color.m1v");
         string alpha = Path.Combine(work, "alpha.m1v");
         string usm = Path.Combine(work, "portrait.usm");
-        progress?.Report("正在转换视频并处理透明通道…");
+        progress?.Report(UiText.T("正在转换视频并处理透明通道…"));
         // Copy coverage directly into Y, without gray-to-YUV studio-range remapping.
         // The range tag prevents the encoder from inserting another range conversion.
         // MPEG-1 cannot signal BT.709; convert RGB to its standard BT.601 color matrix explicitly.
@@ -123,7 +123,7 @@ public static class PortraitVideoConverter
             "-map", "[a]", "-an", "-r", fps, "-frames:v", (target?.TotalFrames ?? int.MaxValue).ToString(), "-c:v", "mpeg1video", "-q:v", "1", "-qmin", "1", "-bf", "0", "-g", "15", "-pix_fmt", "yuv420p", "-fs", "134217728", alpha }, token);
         if (new FileInfo(color).Length >= 134_000_000 || new FileInfo(alpha).Length >= 134_000_000)
             throw new InvalidDataException("视频超过当前转换容量，请使用更短的视频。");
-        progress?.Report("正在封装并校验透明动画…");
+        progress?.Report(UiText.T("正在封装并校验透明动画…"));
         await RunAsync(PythonPath, new[] { MuxPath, color, alpha, usm }, token);
         if (!File.Exists(usm)) throw new InvalidDataException("编码器未生成 USM 文件");
         return usm;

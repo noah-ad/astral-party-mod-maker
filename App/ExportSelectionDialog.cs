@@ -5,9 +5,9 @@ public sealed class ExportSelectionDialog : Form
     private readonly List<ModEntry> _entries;
     private readonly HashSet<ModEntry> _selected;
     private readonly ListView _list = new() { Dock = DockStyle.Fill, View = View.Details, CheckBoxes = true, FullRowSelect = true };
-    private readonly TextBox _search = new() { Width = 240, PlaceholderText = "搜索名称 / 资源包" };
+    private readonly TextBox _search = new() { Width = 240, PlaceholderText = UiText.T("搜索名称 / 资源包") };
     private readonly ComboBox _range = new() { Width = 150, DropDownStyle = ComboBoxStyle.DropDownList };
-    private readonly Button _export = Theme.FlatButton("导出所选");
+    private readonly Button _export = Theme.FlatButton(UiText.T("导出所选"));
     private bool _refreshing;
 
     public List<ModEntry> SelectedEntries => _entries.Where(_selected.Contains).ToList();
@@ -18,7 +18,7 @@ public sealed class ExportSelectionDialog : Form
         WindowLayout.Configure(this);
         _entries = entries.OrderByDescending(e => e.ModifiedAt).ToList();
         _selected = new HashSet<ModEntry>(_entries);
-        Text = bundles ? "选择导出的资源包" : "选择导出的贴图";
+        Text = bundles ? UiText.T("选择导出的资源包") : UiText.T("选择导出的贴图");
         Size = new Size(860, 600);
         MinimumSize = new Size(640, 420);
         StartPosition = FormStartPosition.CenterParent;
@@ -27,9 +27,9 @@ public sealed class ExportSelectionDialog : Form
         ForeColor = Theme.Text;
         _list.BackColor = Theme.Card;
         _list.ForeColor = Theme.Text;
-        _list.Columns.Add("贴图", 300);
-        _list.Columns.Add("修改时间", 155);
-        _list.Columns.Add("资源包", 300);
+        _list.Columns.Add(UiText.T("贴图"), 300);
+        _list.Columns.Add(UiText.T("修改时间"), 155);
+        _list.Columns.Add(UiText.T("资源包"), 300);
         void LayoutColumns()
         {
             int width = Math.Max(1, _list.ClientSize.Width - SystemInformation.VerticalScrollBarWidth);
@@ -47,18 +47,18 @@ public sealed class ExportSelectionDialog : Form
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var filters = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(8), WrapContents = true };
-        _range.Items.AddRange(new object[] { "全部时间", "最近 24 小时", "最近 7 天", "时间未知" });
+        _range.Items.AddRange(new object[] { UiText.T("全部时间"), UiText.T("最近 24 小时"), UiText.T("最近 7 天"), UiText.T("时间未知") });
         _range.SelectedIndex = 0;
         filters.Controls.AddRange(new Control[] { _search, _range });
-        var all = Theme.FlatButton("全选当前结果");
-        var none = Theme.FlatButton("清空选择");
+        var all = Theme.FlatButton(UiText.T("全选当前结果"));
+        var none = Theme.FlatButton(UiText.T("清空选择"));
         filters.Controls.AddRange(new Control[] { all, none });
         var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new Padding(8), FlowDirection = FlowDirection.RightToLeft };
-        var cancel = Theme.FlatButton("取消");
+        var cancel = Theme.FlatButton(UiText.T("取消"));
         cancel.DialogResult = DialogResult.Cancel;
         footer.Controls.AddRange(new Control[] { _export, cancel });
         var notice = new Label { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(12, 8, 12, 8),
-            Text = "同一资源包中的其它修改会一并导出；基础资源与热更新缓存混选时自动分为两个 ZIP。", Visible = bundles };
+            Text = UiText.T("同一资源包中的其它修改会一并导出；基础资源与热更新缓存混选时自动分为两个 ZIP。"), Visible = bundles };
         layout.Controls.Add(filters, 0, 0);
         layout.Controls.Add(_list, 0, 1);
         layout.Controls.Add(notice, 0, 2);
@@ -96,8 +96,8 @@ public sealed class ExportSelectionDialog : Form
             _list.Items.Clear();
             foreach (var entry in visible)
             {
-                var item = new ListViewItem(entry.TextureName ?? entry.Label ?? "未命名") { Tag = entry, Checked = _selected.Contains(entry) };
-                item.SubItems.Add(entry.ModifiedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? "时间未知");
+                var item = new ListViewItem(entry.TextureName ?? entry.Label ?? UiText.T("未命名")) { Tag = entry, Checked = _selected.Contains(entry) };
+                item.SubItems.Add(entry.ModifiedAt?.ToLocalTime().ToString("yyyy-MM-dd HH:mm") ?? UiText.T("时间未知"));
                 item.SubItems.Add(entry.Bundle ?? "");
                 _list.Items.Add(item);
             }
@@ -116,7 +116,7 @@ public sealed class ExportSelectionDialog : Form
 
     private void UpdateCount()
     {
-        _export.Text = $"导出所选 ({_selected.Count})";
+        _export.Text = UiText.F($"导出所选 ({_selected.Count})");
         _export.Enabled = _selected.Count > 0;
     }
 }

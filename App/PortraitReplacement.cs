@@ -55,25 +55,25 @@ public static class PortraitReplacement
 
     public static BindingStatus CheckCurrentBinding(string root, Receipt receipt, string gameDirectory = null)
     {
-        if (!IsInstalled(root, receipt)) return new(false, "动态记录与当前文件不一致，可能已更新或还原；当前显示静态贴图。");
-        if (receipt.Mode != IndependentVideoPatch.Mode) return new(false, "这是旧借槽动态记录，未核验当前游戏加载入口；请还原后重新替换。");
+        if (!IsInstalled(root, receipt)) return new(false, UiText.T("动态记录与当前文件不一致，可能已更新或还原；当前显示静态贴图。"));
+        if (receipt.Mode != IndependentVideoPatch.Mode) return new(false, UiText.T("这是旧借槽动态记录，未核验当前游戏加载入口；请还原后重新替换。"));
         if (File.Exists(Path.Combine(root, IndependentVideoPatch.Folder, "disabled")))
-            return new(false, "独立动态已被 JixVideos/disabled 暂停，游戏使用静态贴图。");
+            return new(false, UiText.T("独立动态已被 JixVideos/disabled 暂停，游戏使用静态贴图。"));
         try
         {
             var target = RuntimeBundleLocator.Resolve(root, gameDirectory);
-            if (target == null) return new(false, "文件已写入，但此目录没有当前游戏版本索引，未验证游戏加载入口。");
+            if (target == null) return new(false, UiText.T("文件已写入，但此目录没有当前游戏版本索引，未验证游戏加载入口。"));
             if (!RuntimeBundleLocator.SamePath(root, target.CacheRoot))
-                return new(false, "旧动态写入了非当前版本的缓存目录，游戏不会加载它。请还原旧动态，再重新替换。");
+                return new(false, UiText.T("旧动态写入了非当前版本的缓存目录，游戏不会加载它。请还原旧动态，再重新替换。"));
             string relative = Path.GetRelativePath(Path.GetFullPath(root), target.Path).Replace('\\', '/');
             if (!receipt.Hashes.ContainsKey(relative))
-                return new(false, "旧动态写入了非当前版本的程序集，游戏不会加载它。请还原旧动态，再重新替换。");
+                return new(false, UiText.T("旧动态写入了非当前版本的程序集，游戏不会加载它。请还原旧动态，再重新替换。"));
             if (receipt.UseDataPath != RuntimeBundleLocator.UsesDataPath(root, gameDirectory))
-                return new(false, "视频读取路径与当前安装目录不一致，请还原旧动态后重新替换。");
-            return new(true, "已写入当前版本 " + Path.GetFileNameWithoutExtension(target.Catalog) + "；文件与绑定校验通过，游戏内播放待确认。");
+                return new(false, UiText.T("视频读取路径与当前安装目录不一致，请还原旧动态后重新替换。"));
+            return new(true, UiText.T("已写入当前版本 ") + Path.GetFileNameWithoutExtension(target.Catalog) + UiText.T("；文件与绑定校验通过，游戏内播放待确认。"));
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException or ArgumentException or InvalidOperationException or FormatException)
-        { return new(false, "当前动态绑定未生效或尚无法核验：" + ex.Message); }
+        { return new(false, UiText.T("当前动态绑定未生效或尚无法核验：") + ex.Message); }
     }
 
     public static Receipt Apply(AnimatedPortraitPatch.Request request, string preview = null, string sourceName = "", bool removeGreen = false)
@@ -164,7 +164,7 @@ public static class PortraitReplacement
 
     public static void EnsureGameClosed()
     {
-        var games = new[] { "AstralParty_CN", "AstralParty" }
+        var games = new[] { "AstralParty_CN", "AstralParty_INT", "AstralParty" }
             .SelectMany(System.Diagnostics.Process.GetProcessesByName).ToArray();
         bool running = games.Length > 0;
         foreach (var game in games) game.Dispose();

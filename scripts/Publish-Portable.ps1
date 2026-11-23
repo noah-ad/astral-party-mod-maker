@@ -23,7 +23,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot read package version and edition.' }
 $version = $properties.Version
 $launcher = $properties.PortableLauncherName + '.exe'
 if (!$OutputDirectory) {
-    $OutputDirectory = Join-Path $repo "artifacts/吉星Mod制作器-v$version-win64-$($properties.PackageEditionLabel)"
+    $OutputDirectory = Join-Path $repo "发布/$($properties.PortableLauncherName)"
 }
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 $data = Join-Path $output 'data'
@@ -43,12 +43,15 @@ if ($bundleVideo) {
             throw "Missing bundled video component or notice: $file. Prepare App/Tools/video before building the offline full package, or explicitly use -WithoutVideoRuntime for the standard package."
         }
     }
+    foreach ($name in @('adb.exe', 'AdbWinApi.dll', 'AdbWinUsbApi.dll', 'libwinpthread-1.dll', 'NOTICE.txt', 'DISTRIBUTION.md')) {
+        if (!(Test-Path -LiteralPath (Join-Path $repo "App/Tools/adb/$name") -PathType Leaf)) { throw "Missing bundled Android component: $name" }
+    }
     & (Join-Path $repo 'App/Tools/video/python/python.exe') -I -c 'from cricodecs import usm, video'
     if ($LASTEXITCODE -ne 0) { throw 'The local video runtime is incomplete.' }
 }
 
 & dotnet publish $project -c Release -r win-x64 --self-contained true -o $data `
-    "-p:PortableRoot=$output" "-p:IncludeVideoRuntime=$includeVideo" -v minimal
+    "-p:PortableRoot=$output" "-p:IncludeVideoRuntime=$includeVideo" -p:DebugType=None -v minimal
 if ($LASTEXITCODE -ne 0) { throw 'Portable publish failed; output has not been archived.' }
 
 $entries = @(Get-ChildItem -LiteralPath $output -Force)
@@ -71,6 +74,8 @@ if ($bundleVideo) {
     if ($LASTEXITCODE -ne 0) { throw 'Bundled FFmpeg cannot start.' }
     & (Join-Path $data 'Tools/video/python/python.exe') -I -c 'from cricodecs import usm, video'
     if ($LASTEXITCODE -ne 0) { throw 'Bundled USM runtime cannot start.' }
+    & (Join-Path $data 'Tools/adb/adb.exe') version | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Bundled ADB cannot start.' }
 }
 if (!$bundleVideo -and ((Test-Path -LiteralPath (Join-Path $data 'Tools/video/ffmpeg.exe')) -or
     (Test-Path -LiteralPath (Join-Path $data 'Tools/video/python')))) {

@@ -111,15 +111,28 @@ public static class ReplacementZip
             }
         }
         if (files.Count == 0) throw new InvalidOperationException("没有选择资源");
+        ValidateAndroidTargets(root, files.Keys);
         var temporary = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            using (var zip = ZipFile.Open(temporary, ZipArchiveMode.Create))
-                foreach (var file in files.OrderBy(p => p.Key, StringComparer.Ordinal))
-                    zip.CreateEntryFromFile(file.Value, file.Key, CompressionLevel.Optimal);
+            FileIntegrity.WriteZip(root, files.Keys, temporary);
             File.Move(temporary, destination, true);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
         return files.Count;
+    }
+
+    private static void ValidateAndroidTargets(string root, IEnumerable<string> paths)
+    {
+        if (!string.Equals(Path.GetFileName(root), "AssetBundles", StringComparison.OrdinalIgnoreCase)
+            || IndexService.UserCacheFor(root) != null || RuntimeBundleLocator.GameDataCache(root) != null) return;
+        string parent = Path.GetDirectoryName(root)!;
+        string[] catalogs = Directory.EnumerateFiles(parent, "catalog_*.json", SearchOption.TopDirectoryOnly).ToArray();
+        if (catalogs.Length == 0) return;
+        if (catalogs.Length > 1) throw new InvalidDataException("手机目录存在多个版本资源表。请使用“导出安卓贴图”读取手机当前版本，不能按文件时间猜测版本。");
+        var catalog = new AndroidTextureCatalog(File.ReadAllBytes(catalogs[0]));
+        var active = catalog.Textures.Values.Where(location => !location.InApk).Select(location => location.CachePath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        string[] outdated = paths.Where(path => path.EndsWith("/__data", StringComparison.OrdinalIgnoreCase) && !active.Contains(path)).ToArray();
+        if (outdated.Length > 0) throw new InvalidDataException($"所选 {outdated.Length} 个缓存包不在当前手机资源表的外部贴图路径中。请使用“导出安卓贴图”重新生成，不能只给旧包改目录名。");
     }
 }

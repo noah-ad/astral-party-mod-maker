@@ -7,6 +7,9 @@
 # 本地 / 临时 / 个人数据
 发布/
 artifacts/
+本地资料/
+modkit_data/
+*.lnk
 演示bundle/
 Probe/
 角色命名备份.json
@@ -25,3 +28,5 @@ __data
 __info
 App/Tools/video/ffmpeg.exe
 App/Tools/video/python/
+App/Tools/adb/*
+!App/Tools/adb/DISTRIBUTION.md

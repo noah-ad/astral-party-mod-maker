@@ -47,7 +47,7 @@ public class CropDialog : Form
         _src = new Bitmap(imagePath);
         _targetW = targetW; _targetH = targetH;
 
-        Text = $"调整布局 — {title}  (画布 {targetW}×{targetH})";
+        Text = UiText.F($"调整布局 — {title}  (画布 {targetW}×{targetH})");
         Width = 940; Height = 760;
         StartPosition = FormStartPosition.CenterParent;
         BackColor = Theme.Bg; ForeColor = Theme.Text; Font = Theme.UI(9.5f);
@@ -56,13 +56,13 @@ public class CropDialog : Form
 
         var bar = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
             WrapContents = true, Padding = new Padding(8), BackColor = Theme.Bar };
-        var btnFit = Theme.FlatButton("适应整图"); btnFit.Margin = new Padding(3); btnFit.Click += (_, _) => { Fit(); };
-        var btnFill = Theme.FlatButton("填满画布"); btnFill.Margin = new Padding(3); btnFill.Click += (_, _) => { Fill(); };
-        var btnCenter = Theme.FlatButton("居中"); btnCenter.Margin = new Padding(3); btnCenter.Click += (_, _) => { Center(); };
-        var btnZoomIn = Theme.FlatButton("放大 +"); btnZoomIn.Margin = new Padding(3); btnZoomIn.Click += (_, _) => ZoomLayer(1.1f);
-        var btnZoomOut = Theme.FlatButton("缩小 −"); btnZoomOut.Margin = new Padding(3); btnZoomOut.Click += (_, _) => ZoomLayer(0.9f);
-        var ok = Theme.FlatButton("✔ 确定"); ok.Margin = new Padding(3); ok.Click += (_, _) => DoRender();
-        var cancel = Theme.FlatButton("取消"); cancel.Margin = new Padding(3);
+        var btnFit = Theme.FlatButton(UiText.T("适应整图")); btnFit.Margin = new Padding(3); btnFit.Click += (_, _) => { Fit(); };
+        var btnFill = Theme.FlatButton(UiText.T("填满画布")); btnFill.Margin = new Padding(3); btnFill.Click += (_, _) => { Fill(); };
+        var btnCenter = Theme.FlatButton(UiText.T("居中")); btnCenter.Margin = new Padding(3); btnCenter.Click += (_, _) => { Center(); };
+        var btnZoomIn = Theme.FlatButton(UiText.T("放大 +")); btnZoomIn.Margin = new Padding(3); btnZoomIn.Click += (_, _) => ZoomLayer(1.1f);
+        var btnZoomOut = Theme.FlatButton(UiText.T("缩小 −")); btnZoomOut.Margin = new Padding(3); btnZoomOut.Click += (_, _) => ZoomLayer(0.9f);
+        var ok = Theme.FlatButton(UiText.T("✔ 确定")); ok.Margin = new Padding(3); ok.Click += (_, _) => DoRender();
+        var cancel = Theme.FlatButton(UiText.T("取消")); cancel.Margin = new Padding(3);
         cancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
         bar.Controls.AddRange(new Control[] { btnFit, btnFill, btnCenter, btnZoomIn, btnZoomOut, cancel, ok });
 
@@ -70,7 +70,7 @@ public class CropDialog : Form
         {
             Dock = DockStyle.Top, AutoSize = true, BackColor = Theme.Bar, ForeColor = Theme.SubText,
             TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(12, 0, 0, 0),
-            Text = "拖动=移动图片 · 滚轮/+−=缩放 · 方向键=微调(Shift 大步) · 亮区(画布)内为最终效果, 外面会被裁掉"
+            Text = UiText.T("拖动=移动图片 · 滚轮/+−=缩放 · 方向键=微调(Shift 大步) · 亮区(画布)内为最终效果, 外面会被裁掉")
         };
 
         _canvas.Paint += OnPaint;
@@ -229,7 +229,7 @@ public class CropDialog : Form
             DialogResult = DialogResult.OK;
             Close();
         }
-        catch (Exception ex) { MessageBox.Show($"生成失败：{ex.Message}", "错误"); }
+        catch (Exception ex) { MessageBox.Show(UiText.F($"生成失败：{ex.Message}"), UiText.T("错误")); }
     }
 
     protected override void Dispose(bool disposing)

@@ -9,15 +9,23 @@
 
 ## 下载
 
-最新发行版：**v2.3.6 完整视频版**。修复动态替换误报“程序集未下载”、旧 Mod 记录识别和混合来源 ZIP 导出，保留高 DPI 布局与怪兽立绘补齐。
+最新发行版：**v2.4.2**（Windows x64）。支持 Steam 国服与海外服的资源检索和图包替换，更新了界面、读取进度和安卓贴图工具。
 
-**随包提供 FFmpeg、Python 和 CriCodecs，完整解压后不需要再下载视频组件。** 同时核对用户缓存和游戏安装目录缓存，按当前 catalog 精确定位程序集，不会因为用户目录只留下旧包而误报未下载。
+**随包提供 FFmpeg、Python、CriCodecs 和 ADB。** 完整解压后不需要再下载视频组件或安装 .NET。
 
-- [下载 v2.3.6 Win64 完整视频版](https://github.com/noah-ad/astral-party-mod-maker/releases/download/v2.3.6/AstralPartyModMaker-v2.3.6-win64-full.zip)
-- [查看 v2.3.6 更新说明](docs/releases/v2.3.6.md)
+- [下载 v2.4.2](https://github.com/noah-ad/astral-party-mod-maker/releases/tag/v2.4.2)：在 Assets 中选择 `吉星Mod制作器-v2.4.2.zip`。
+- [查看 v2.4.2 更新说明](docs/releases/v2.4.2.md)
 - [查看全部版本与更新说明](https://github.com/noah-ad/astral-party-mod-maker/releases)
 
-**v2.3.6 完整视频版直接拖入视频 / GIF 即可转换，无需启用下载。** 只有旧标准版或显式构建的精简标准版需要首次点击“下载并启用”，从 FFmpeg 构建发布者、Python 官网及 PyPI 下载固定版本组件并校验 SHA256。完整视频版不走这个下载流程。
+通过“工具 → 检测海外服”，或选择海外服的 `com.unity.addressables`（包括下面的 `AssetBundles`），即可同时载入该服的基础包和热更新缓存。国服、海外服和独立资源目录分别建立索引，不会混扫。
+
+图包在当前资源库中按贴图名匹配，不依赖另一服的 Bundle 名或 PathID。导入海外服时，如果图包只包含普通版或和谐版中的一张，也会匹配同名 `_sfw` 对应版本；两张都提供时分别应用。扫描和图包写入均显示实际进度，写入前请关闭游戏。
+
+界面改用深色底、樱粉和薄荷色，分类栏、标题和工作台使用当前游戏目录里的账号背景和骰子贴图，缺少素材也能使用。中英文可即时切换；切页保留预览与滚动位置，窄窗口可切换分类、浏览和预览。
+
+本版也包含 v2.3.7 和 v2.3.8 的改动：安装目录缓存补齐、普通 / SFW 资源显示、按当前手机版本重建安卓贴图、ZIP 回读校验、USB 安装校验和备份还原。参见 [v2.3.8 更新说明](docs/releases/v2.3.8.md)。
+
+完整包直接拖入视频 / GIF 即可转换。仅旧标准版或显式构建的精简标准版需要首次点击“下载并启用”，从 FFmpeg 构建发布者、Python 官网及 PyPI 下载固定版本组件并校验 SHA256。
 
 完整包可以在没有用户组件缓存的机器上离线转换视频。只浏览静态资源、检查组件或生成预览都不会改动游戏文件。独立动态立绘 / 手牌 / 事件仍属于实验功能，游戏内启动和 Android 兼容性限制见下文。
 
@@ -28,7 +36,7 @@
 文件夹、ZIP、启动 EXE 和窗口标题统一标出版本号。便携包顶层只有两项：
 
 ```text
-吉星Mod制作器-v2.3.6-完整视频版.exe
+吉星Mod制作器-v2.4.2.exe
 data/
 ```
 
@@ -39,6 +47,14 @@ data/
 该布局不改变游戏 Mod 的直接覆盖 ZIP。第三方程序随完整发行包提供，不提交到 Git 源码历史。版本、原始分发包、校验值、源码入口和条款说明见 [转换组件说明](App/Tools/video/DEPENDENCIES.md)。
 
 ## 功能
+
+**安卓贴图**：作品页或工具页打开“导出安卓贴图”，连接手机读取当前 APK 与 catalog，选择当前作品的图片或添加 `.jxpack`，生成当前安卓版本的独立贴图包。APK 内置资源通过 `JixModResources` 加载所选贴图包。不修改 APK、DLL、登录资源或代理。导出会检查 Bundle 长度并回读 ZIP 的全部文件；USB 安装先备份、再暂存并校验，最后提交资源表并读回手机文件 SHA256。窗口提供还原安装入口。
+
+新版安卓 ZIP 的解压根目录是 `Android/data/com.feimo.astralparty/files/com.unity.addressables/`，不是其内部的 `AssetBundles/`。同名 `.install.json` 是工具安装所需的外部校验清单。推荐使用工具“安装 ZIP 并校验”，不要将 MT 显示复制结束视为完整写入证明。`close failed: EPERM` 来自手机写入端，修改 ZIP 不能保证消除；工具会通过读回发现被截断的文件。文件校验通过与游戏内生效分别报告，尚未在游戏中确认的卡面不会标为已验证。
+
+已安装后可重新读取手机再导出。只选部分新贴图时，已有独立贴图仍保留，外部清单会列出增量包的前置文件并在安装前核验；这种包不能直接用于没有相同前置资源的手机。本次游戏 3.3.0 的全量包重建了 894 张贴图，包含 301～306 的 48 张，895 个手机文件读回通过，用户已确认全量替换生效。
+
+**PC 资源来源**：同时索引基础资源、用户缓存和 `*_Data/com.unity.addressables/AssetBundles` 安装目录缓存。同名资源在浏览时保留不同来源，详情显示完整位置；旧基础包存在同名缓存时会提示。可按基础资源、用户缓存、安装缓存分别生成直接覆盖 ZIP，并显示各自覆盖目录。增量扫描复用未变化资源包的元数据。
 
 **v2.3.6** 补全安装目录缓存定位：当前游戏 3.3.0 的程序集可位于 `AstralParty_CN_Data/com.unity.addressables/AssetBundles`，不能仅检查 `LocalLow`。程序、独立视频、备份和直接覆盖 ZIP 使用同一缓存布局，安装目录模式通过 `Application.dataPath` 读取视频；Android / 用户缓存模式仍使用 `persistentDataPath`。保留旧动态还原入口，两处均有当前包或 catalog 冲突时停止写入。见 [v2.3.6 更新说明](docs/releases/v2.3.6.md)。
 
@@ -146,7 +162,7 @@ dotnet run -c Release
 ./scripts/Publish-Portable.ps1 -WithVideoRuntime -OutputDirectory ./artifacts/local-full
 ```
 
-完整视频版默认产物在 `artifacts/吉星Mod制作器-v2.3.6-win64-完整视频版/`，同名 ZIP 位于旁边。构建前必须备齐 `App/Tools/video` 下的转换组件和第三方声明，缺少时脚本会失败，不会悄悄生成需要下载的精简版。公开分发前应确认 [第三方组件条款](App/Tools/video/DEPENDENCIES.md)。脚本拒绝覆盖已有目录或 ZIP。对外交付有变化的程序必须先递增项目版本号。启动文件以相对路径加载 `data/JixModMaker.dll`，运行时也随包存放。普通 `dotnet build` 的开发输出维持原样。
+默认构建包含视频组件，目录、ZIP 和启动 EXE 统一以 `吉星Mod制作器-v2.4.2` 命名。便携目录和同名 ZIP 位于 `发布/`；构建另一版本类型时用 `-OutputDirectory` 指定单独的路径。`artifacts/` 只放临时验证输出。构建前必须备齐 `App/Tools/video` 下的转换组件和第三方声明，缺少时脚本会失败，不会悄悄生成需要下载的精简版。公开分发前应确认 [第三方组件条款](App/Tools/video/DEPENDENCIES.md)。脚本拒绝覆盖已有目录或 ZIP。启动文件以相对路径加载 `data/JixModMaker.dll`，运行时也随包存放。普通 `dotnet build` 的开发输出维持原样。
 
 可运行 `./Tests/PortablePackage.ps1 -PackageDirectory <发布目录>` 检查根目录结构、图标与版本、中文空格路径、移动后的启动和随包运行库。测试只打开空资源目录，不修改游戏文件。
 
@@ -155,7 +171,7 @@ dotnet run -c Release
 ## 使用
 
 1. 启动程序并等待自动检测；未检测到时，手动选择包含游戏资源的目录。
-2. 普通 PC 版选择 `...\StreamingAssets\aa\StandaloneWindows64`；B服选择 `...\com.unity.addressables\AssetBundles`。
+2. Steam 国服或海外服可选游戏目录、`...\StreamingAssets\aa\StandaloneWindows64` 或对应游戏的 `...\com.unity.addressables\AssetBundles`；独立的 B 服资源目录可直接打开。
 3. 在“资源浏览”中选择类型，展开角色与皮肤后选中资源。
 4. 将图片拖入卡片完成替换，或把预览拖到文件夹导出 PNG。
 5. 在“作品 / 导出”中导出 `.jxpack` 或 Bundle ZIP；在“工具 / 维护”中刷新索引、完整扫描、迁移或还原。

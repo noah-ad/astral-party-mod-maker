@@ -4,29 +4,29 @@ using System.Windows.Forms;
 
 namespace JixModMaker;
 
-/// <summary>全局视觉规范: 取自应用图标的深海军蓝 / 冰蓝 / 亮粉 / 金色。</summary>
 public static class Theme
 {
-    public static readonly Color Bg         = Color.FromArgb(18, 18, 45);
-    public static readonly Color FlowBg     = Color.FromArgb(9, 17, 43);
-    public static readonly Color Bar        = Color.FromArgb(27, 27, 62);
-    public static readonly Color Card       = Color.FromArgb(35, 36, 78);
-    public static readonly Color CardAlt    = Color.FromArgb(45, 49, 99);
-    public static readonly Color CardMod    = Color.FromArgb(76, 51, 109);
-    public static readonly Color Accent     = Color.FromArgb(255, 77, 151);
-    public static readonly Color AccentSoft = Color.FromArgb(255, 135, 185);
-    public static readonly Color AccentDim  = Color.FromArgb(124, 107, 226);
-    public static readonly Color Cyan       = Color.FromArgb(105, 215, 241);
-    public static readonly Color CyanDim    = Color.FromArgb(35, 73, 114);
-    public static readonly Color Warn       = Color.FromArgb(255, 211, 122);
-    public static readonly Color Good       = Color.FromArgb(91, 225, 181);
-    public static readonly Color Danger     = Color.FromArgb(255, 102, 126);
-    public static readonly Color Text       = Color.FromArgb(250, 248, 255);
-    public static readonly Color SubText    = Color.FromArgb(202, 202, 234);
-    public static readonly Color Muted      = Color.FromArgb(113, 119, 166);
-    public static readonly Color PicBg      = Color.FromArgb(8, 22, 53);
-    public static readonly Color Line       = Color.FromArgb(63, 71, 122);
-    public static readonly Color Surface    = Color.FromArgb(30, 37, 78);
+    public static readonly Color Bg         = SystemInformation.HighContrast ? SystemColors.Control : Color.FromArgb(31, 30, 39);
+    public static readonly Color FlowBg     = SystemInformation.HighContrast ? SystemColors.Window : Color.FromArgb(23, 23, 30);
+    public static readonly Color Bar        = SystemInformation.HighContrast ? SystemColors.Control : Color.FromArgb(34, 32, 43);
+    public static readonly Color Card       = SystemInformation.HighContrast ? SystemColors.Window : Color.FromArgb(42, 40, 51);
+    public static readonly Color CardAlt    = SystemInformation.HighContrast ? SystemColors.Control : Color.FromArgb(51, 46, 61);
+    public static readonly Color CardMod    = SystemInformation.HighContrast ? SystemColors.Control : Color.FromArgb(62, 42, 58);
+    public static readonly Color Accent     = SystemInformation.HighContrast ? SystemColors.Highlight : Color.FromArgb(249, 153, 181);
+    public static readonly Color AccentSoft = SystemInformation.HighContrast ? SystemColors.Highlight : Color.FromArgb(255, 184, 204);
+    public static readonly Color AccentDim  = SystemInformation.HighContrast ? SystemColors.Highlight : Color.FromArgb(97, 66, 88);
+    public static readonly Color OnAccent   = SystemInformation.HighContrast ? SystemColors.HighlightText : Color.FromArgb(50, 25, 38);
+    public static readonly Color Cyan       = SystemInformation.HighContrast ? SystemColors.HotTrack : Color.FromArgb(131, 215, 205);
+    public static readonly Color CyanDim    = SystemInformation.HighContrast ? SystemColors.ControlLight : Color.FromArgb(51, 75, 77);
+    public static readonly Color Warn       = SystemInformation.HighContrast ? SystemColors.WindowText : Color.FromArgb(244, 202, 130);
+    public static readonly Color Good       = SystemInformation.HighContrast ? SystemColors.WindowText : Color.FromArgb(145, 217, 174);
+    public static readonly Color Danger     = SystemInformation.HighContrast ? SystemColors.WindowText : Color.FromArgb(255, 159, 148);
+    public static readonly Color Text       = SystemInformation.HighContrast ? SystemColors.WindowText : Color.FromArgb(246, 240, 245);
+    public static readonly Color SubText    = SystemInformation.HighContrast ? SystemColors.ControlText : Color.FromArgb(202, 193, 208);
+    public static readonly Color Muted      = SystemInformation.HighContrast ? SystemColors.GrayText : Color.FromArgb(165, 155, 176);
+    public static readonly Color PicBg      = SystemInformation.HighContrast ? SystemColors.Control : Color.FromArgb(29, 29, 36);
+    public static readonly Color Line       = SystemInformation.HighContrast ? SystemColors.ControlDark : Color.FromArgb(75, 69, 83);
+    public static readonly Color Surface    = SystemInformation.HighContrast ? SystemColors.Control : Color.FromArgb(53, 49, 62);
 
     public static Font UI(float size, bool bold = false)
         => new("Microsoft YaHei UI", size, bold ? FontStyle.Bold : FontStyle.Regular);
@@ -99,7 +99,6 @@ public class RoundButton : Button
         set
         {
             _radius = Math.Max(2, value);
-            UpdateRoundedRegion();
             Invalidate();
         }
     }
@@ -108,6 +107,7 @@ public class RoundButton : Button
     public Color DownBackColor { get; set; } = Theme.AccentDim;
     public Color GradientColor { get; set; } = Color.Transparent;
     public Color IndicatorColor { get; set; } = Color.Transparent;
+    public string Symbol { get; set; }
 
     public RoundButton()
     {
@@ -116,27 +116,6 @@ public class RoundButton : Button
         FlatStyle = FlatStyle.Flat;
         FlatAppearance.BorderSize = 0;
         UseVisualStyleBackColor = false;
-    }
-
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        UpdateRoundedRegion();
-    }
-
-    protected override void OnSizeChanged(EventArgs e)
-    {
-        base.OnSizeChanged(e);
-        UpdateRoundedRegion();
-    }
-
-    private void UpdateRoundedRegion()
-    {
-        if (Width <= 0 || Height <= 0) return;
-        using var path = Theme.RoundRect(new Rectangle(0, 0, Width, Height), _radius);
-        var old = Region;
-        Region = new Region(path);
-        old?.Dispose();
     }
 
     private Color ParentSurfaceColor()
@@ -155,8 +134,8 @@ public class RoundButton : Button
         return Theme.Bg;
     }
 
-    protected override void OnPaintBackground(PaintEventArgs pevent)
-        => pevent.Graphics.Clear(ParentSurfaceColor());
+    // ButtonBase can skip WM_ERASEBKGND. Every frame must include the pixels outside the curve.
+    protected override void OnPaintBackground(PaintEventArgs pevent) { }
 
     protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
     protected override void OnMouseLeave(EventArgs e) { _hover = false; _down = false; Invalidate(); base.OnMouseLeave(e); }
@@ -166,6 +145,8 @@ public class RoundButton : Button
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.None;
+        using (var surface = new SolidBrush(ParentSurfaceColor())) g.FillRectangle(surface, ClientRectangle);
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
         var r = ClientRectangle;
@@ -175,7 +156,7 @@ public class RoundButton : Button
 
         var fill = Enabled
             ? _down ? DownBackColor : _hover ? HoverBackColor : BackColor
-            : Color.FromArgb(45, 38, 58);
+            : Theme.Surface;
 
         using (var path = Theme.RoundRect(r, Radius))
         {
@@ -217,7 +198,22 @@ public class RoundButton : Button
             : TextAlign is ContentAlignment.MiddleRight or ContentAlignment.TopRight or ContentAlignment.BottomRight
                 ? TextFormatFlags.Right
                 : TextFormatFlags.HorizontalCenter;
-        TextRenderer.DrawText(g, Text, Font, textBounds, Enabled ? ForeColor : Color.FromArgb(120, 112, 140), flags);
+        var ink = Enabled ? ForeColor : Theme.Muted;
+        if (Symbol != null)
+        {
+            using var symbolFont = new Font("Segoe MDL2 Assets", Font.Size);
+            int glyph = Font.Height, gap = Math.Max(3, glyph / 3);
+            int groupWidth = glyph + gap + TextRenderer.MeasureText(Text, Font).Width;
+            if (groupWidth <= textBounds.Width)
+            {
+                int x = textBounds.X + (textBounds.Width - groupWidth) / 2;
+                TextRenderer.DrawText(g, Symbol, symbolFont, new Rectangle(x, textBounds.Y, glyph, textBounds.Height), ink,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+                textBounds = new Rectangle(x + glyph + gap, textBounds.Y, groupWidth - glyph - gap, textBounds.Height);
+            }
+        }
+        TextRenderer.DrawText(g, Text, Font, textBounds, ink, flags);
+        if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(g, Rectangle.Inflate(r, -5, -4), ForeColor, fill);
     }
 }
 
@@ -243,8 +239,11 @@ public class RoundedCard : Panel
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.None;
+        using (var outside = new SolidBrush(BackColor)) g.FillRectangle(outside, ClientRectangle);
         g.SmoothingMode = SmoothingMode.AntiAlias;
         var r = ClientRectangle; r.Width -= 1; r.Height -= 1;
+        if (r.Width < 2 || r.Height < 2) return;
         using var path = Theme.RoundRect(r, Radius);
         if (GradientFill.A > 0)
         {

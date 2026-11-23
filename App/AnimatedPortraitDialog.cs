@@ -7,18 +7,18 @@ public sealed class AnimatedPortraitDialog : Form
     private readonly Size _targetSize;
     private readonly string _work = Path.Combine(Path.GetTempPath(), "JixDragVideo-" + Guid.NewGuid().ToString("N"));
     private readonly PictureBox _preview = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(48, 48, 52) };
-    private readonly Label _status = new() { Dock = DockStyle.Fill, AutoSize = true, Text = "尚未替换", Padding = new Padding(0, 8, 0, 8) };
-    private readonly CheckBox _removeGreen = new() { Text = "去绿幕", AutoSize = true, Checked = false };
-    private readonly Button _choose = Theme.FlatButton("选择视频");
-    private readonly Button _replace = Theme.FlatButton("替换");
-    private readonly Button _restore = Theme.FlatButton("恢复原资源");
-    private readonly Button _export = Theme.FlatButton("导出 ZIP");
-    private readonly Button _cancel = Theme.FlatButton("关闭");
+    private readonly Label _status = new() { Dock = DockStyle.Fill, AutoSize = true, Text = UiText.T("尚未替换"), Padding = new Padding(0, 8, 0, 8) };
+    private readonly CheckBox _removeGreen = new() { Text = UiText.T("去绿幕"), AutoSize = true, Checked = false };
+    private readonly Button _choose = Theme.FlatButton(UiText.T("选择视频"));
+    private readonly Button _replace = Theme.FlatButton(UiText.T("替换"));
+    private readonly Button _restore = Theme.FlatButton(UiText.T("恢复原资源"));
+    private readonly Button _export = Theme.FlatButton(UiText.T("导出 ZIP"));
+    private readonly Button _cancel = Theme.FlatButton(UiText.T("关闭"));
     private readonly VideoCropControl _crop = new() { Dock = DockStyle.Fill };
     private readonly PortraitViewTabs _views = new() { Dock = DockStyle.Top };
     private readonly Panel _viewHost = new() { Dock = DockStyle.Fill };
     private readonly Panel _cropPage = new() { Dock = DockStyle.Fill };
-    private readonly TrackBar _zoom = new() { Minimum = 100, Maximum = 400, Value = 100, TickStyle = TickStyle.None, Width = 160, Height = 30, AccessibleName = "取景缩放" };
+    private readonly TrackBar _zoom = new() { Minimum = 100, Maximum = 400, Value = 100, TickStyle = TickStyle.None, Width = 160, Height = 30, AccessibleName = UiText.T("取景缩放") };
     private readonly ToolTip _tooltips = new();
     private readonly Label _dimensions = new() { AutoSize = true, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(8) };
     private Image _sourceImage;
@@ -26,7 +26,7 @@ public sealed class AnimatedPortraitDialog : Form
     private CancellationTokenSource _operation;
     private bool _writing, _previewReady, _animationCurrent;
     private string _lastInput;
-    public string ResultMessage { get; private set; } = "尚未替换";
+    public string ResultMessage { get; private set; } = UiText.T("尚未替换");
 
     public AnimatedPortraitDialog(string root, string texture, string initialFile = null, Size? targetSize = null, string gameDirectory = null)
     {
@@ -38,7 +38,7 @@ public sealed class AnimatedPortraitDialog : Form
         _gameDirectory = gameDirectory;
         _targetSize = targetSize ?? new Size(880, 1205);
         if (_targetSize.Width <= 0 || _targetSize.Height <= 0) throw new ArgumentOutOfRangeException(nameof(targetSize));
-        Text = "替换为视频 / GIF - " + AppBuildInfo.ReleaseLabel;
+        Text = UiText.T("替换为视频 / GIF - ") + AppBuildInfo.ReleaseLabel;
         Font = Theme.UI(9f);
         BackColor = Theme.Bg;
         ForeColor = Theme.Text;
@@ -53,7 +53,7 @@ public sealed class AnimatedPortraitDialog : Form
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var header = new Label
         {
-            Text = texture + "\n独立视频实验版 · 不占用官方异画",
+            Text = texture + UiText.T("\n独立视频实验版 · 不占用官方异画"),
             AutoSize = true, Padding = new Padding(0, 0, 0, 12), ForeColor = Theme.Cyan
         };
         layout.Controls.Add(header, 0, 0);
@@ -63,7 +63,7 @@ public sealed class AnimatedPortraitDialog : Form
         cropLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         cropLayout.Controls.Add(_crop, 0, 0);
         var cropTools = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(0, 6, 0, 0) };
-        var center = Theme.FlatButton("居中");
+        var center = Theme.FlatButton(UiText.T("居中"));
         cropTools.Controls.AddRange(new Control[] { center, _zoom, _dimensions });
         cropLayout.Controls.Add(cropTools, 0, 1);
         _cropPage.Controls.Add(cropLayout);
@@ -75,8 +75,8 @@ public sealed class AnimatedPortraitDialog : Form
         layout.Controls.Add(workspace, 0, 1);
         _preview.Visible = false;
         center.Click += (_, _) => _crop.CenterCrop();
-        _tooltips.SetToolTip(_zoom, "取景缩放");
-        _tooltips.SetToolTip(_crop, "拖动取景框调整位置");
+        _tooltips.SetToolTip(_zoom, UiText.T("取景缩放"));
+        _tooltips.SetToolTip(_crop, UiText.T("拖动取景框调整位置"));
         _zoom.ValueChanged += (_, _) => _crop.SetZoom(_zoom.Value / 100f);
         _crop.CropChanged += (_, _) =>
         {
@@ -98,6 +98,7 @@ public sealed class AnimatedPortraitDialog : Form
         layout.SizeChanged += (_, _) => _status.MaximumSize = header.MaximumSize = new Size(Math.Max(100, layout.ClientSize.Width - layout.Padding.Horizontal - 8), 0);
         _replace.Enabled = false;
         _replace.BackColor = Theme.Accent;
+        _replace.ForeColor = Color.White;
         _restore.Visible = _export.Visible = false;
         foreach (Control surface in new Control[] { this, _preview, _crop, layout })
         {
@@ -111,7 +112,7 @@ public sealed class AnimatedPortraitDialog : Form
         }
         _choose.Click += async (_, _) =>
         {
-            using var picker = new OpenFileDialog { Filter = "视频 / GIF|*.mp4;*.mov;*.webm;*.avi;*.mkv;*.gif" };
+            using var picker = new OpenFileDialog { Filter = UiText.T("视频 / GIF|*.mp4;*.mov;*.webm;*.avi;*.mkv;*.gif") };
             if (picker.ShowDialog(this) == DialogResult.OK) await PreviewAsync(picker.FileName);
         };
         _replace.Click += async (_, _) => await ReplaceAsync();
@@ -149,8 +150,8 @@ public sealed class AnimatedPortraitDialog : Form
                 if (binding.Current && File.Exists(receipt.Preview)) { ShowPreview(receipt.Preview); _views.SelectedIndex = 1; }
             }
             else if (all != null)
-                SetStatus(all.Mode == IndependentVideoPatch.Mode ? $"已有 {all.Portraits?.Count ?? 1} 个独立动态目标 · 当前目标尚未替换"
-                    : "存在旧槽位替换 · 请先恢复原资源，再安装独立视频");
+                SetStatus(all.Mode == IndependentVideoPatch.Mode ? UiText.F($"已有 {all.Portraits?.Count ?? 1} 个独立动态目标 · 当前目标尚未替换")
+                    : UiText.T("存在旧槽位替换 · 请先恢复原资源，再安装独立视频"));
             if (_initialFile != null && !IsDisposed) await PreviewAsync(_initialFile);
         };
         ResumeLayout(true);
@@ -183,7 +184,7 @@ public sealed class AnimatedPortraitDialog : Form
         _views.Enabled = !busy;
         _viewHost.Enabled = !busy;
         _replace.Enabled = !busy && _previewReady;
-        _cancel.Text = busy ? "取消" : "关闭";
+        _cancel.Text = busy ? UiText.T("取消") : UiText.T("关闭");
         _cancel.Enabled = true;
     }
     private void ShowPreview(string path)
@@ -199,21 +200,21 @@ public sealed class AnimatedPortraitDialog : Form
     private async Task PreviewAsync(string input)
     {
         if (_operation != null) return;
-        if (!IsVideo(input) || !File.Exists(input)) { SetStatus("请选择一个视频或 GIF 文件。"); return; }
-        if (!VideoRuntimeDialog.EnsureReady(this)) { SetStatus("视频组件尚未启用 · 未写入本次视频"); return; }
+        if (!IsVideo(input) || !File.Exists(input)) { SetStatus(UiText.T("请选择一个视频或 GIF 文件。")); return; }
+        if (!VideoRuntimeDialog.EnsureReady(this)) { SetStatus(UiText.T("视频组件尚未启用 · 未写入本次视频")); return; }
         _lastInput = input;
         _previewReady = false;
         _operation = new CancellationTokenSource();
         SetBusy(true);
         try
         {
-            SetStatus("正在检查视频转换组件…");
+            SetStatus(UiText.T("正在检查视频转换组件…"));
             var tools = PortraitVideoSettings.Load();
             await PortraitVideoConverter.EnsureConversionAvailableAsync(tools, _operation.Token);
             Directory.CreateDirectory(_work);
             if (Path.GetExtension(input).Equals(".usm", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("请拖入原始视频或 GIF，以便校验动态预览。");
-            SetStatus("正在读取视频取景…");
+                throw new InvalidDataException(UiText.T("请拖入原始视频或 GIF，以便校验动态预览。"));
+            SetStatus(UiText.T("正在读取视频取景…"));
             string framePath = Path.Combine(_work, "source.png");
             await PortraitVideoConverter.SourceFrameAsync(input, framePath, tools, _operation.Token);
             using (var frame = Image.FromFile(framePath))
@@ -226,10 +227,10 @@ public sealed class AnimatedPortraitDialog : Form
             _views.SelectedIndex = 0;
             _animationCurrent = false;
             _previewReady = true;
-            SetStatus("取景已就绪 · 尚未写入本次视频");
+            SetStatus(UiText.T("取景已就绪 · 尚未写入本次视频"));
         }
-        catch (OperationCanceledException) { SetStatus("预览已取消 · 未写入本次视频"); }
-        catch (Exception ex) { SetStatus("预览失败 · 未写入本次视频：" + ex.Message); }
+        catch (OperationCanceledException) { SetStatus(UiText.T("预览已取消 · 未写入本次视频")); }
+        catch (Exception ex) { SetStatus(UiText.T("预览失败 · 未写入本次视频：") + ex.Message); }
         finally { _operation.Dispose(); _operation = null; SetBusy(false); }
     }
 
@@ -248,19 +249,19 @@ public sealed class AnimatedPortraitDialog : Form
         SetBusy(true);
         try
         {
-            SetStatus("正在生成裁剪后的动态预览…");
+            SetStatus(UiText.T("正在生成裁剪后的动态预览…"));
             await GenerateAnimationAsync(_operation.Token);
-            SetStatus("预览已就绪 · 前 6 秒 · 尚未写入本次视频");
+            SetStatus(UiText.T("预览已就绪 · 前 6 秒 · 尚未写入本次视频"));
         }
-        catch (OperationCanceledException) { SetStatus("预览已取消"); }
-        catch (Exception ex) { SetStatus("预览失败：" + ex.Message); }
+        catch (OperationCanceledException) { SetStatus(UiText.T("预览已取消")); }
+        catch (Exception ex) { SetStatus(UiText.T("预览失败：") + ex.Message); }
         finally { _operation.Dispose(); _operation = null; SetBusy(false); }
     }
 
     private async Task ReplaceAsync()
     {
         if (_operation != null || !_previewReady) return;
-        if (MessageBox.Show(this, "将生成独立 USM 视频，由游戏原生播放器读取，不替换任何官方异画视频。\n仍需修改热更新程序集，当前为未经游戏内验证的实验方案。原静态贴图不变，写入前自动备份，可还原全部动态替换。\n\n关闭游戏后继续？", "独立动态替换（实验）",
+        if (MessageBox.Show(this, UiText.T("将生成独立 USM 视频，由游戏原生播放器读取，不替换任何官方异画视频。\n仍需修改热更新程序集，当前为未经游戏内验证的实验方案。原静态贴图不变，写入前自动备份，可还原全部动态替换。\n\n关闭游戏后继续？"), UiText.T("独立动态替换（实验）"),
             MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
         _operation = new CancellationTokenSource();
         SetBusy(true);
@@ -268,15 +269,15 @@ public sealed class AnimatedPortraitDialog : Form
         {
             var token = _operation.Token;
             PortraitReplacement.EnsureGameClosed();
-            SetStatus("正在定位目标资源…");
+            SetStatus(UiText.T("正在定位目标资源…"));
             var found = await Task.Run(() => AnimatedPortraitPatch.FindBundles(_root, token, runtimeOnly: true, gameDirectory: _gameDirectory), token);
             if (found.Runtime == null)
-                throw new InvalidDataException("缺少热更新程序集，请先让游戏完成资源下载。");
+                throw new InvalidDataException(UiText.T("缺少热更新程序集，请先让游戏完成资源下载。"));
             string installRoot = Directory.GetParent(Directory.GetParent(Path.GetDirectoryName(found.Runtime)!)!.FullName)!.FullName;
             if (!RuntimeBundleLocator.SamePath(installRoot, _root))
             {
                 if (PortraitReplacement.ReadReceipt(_root) != null)
-                    throw new IOException("旧目录仍有动态替换记录，请先点击“恢复原资源”，再对当前版本替换。旧备份不会自动覆盖新版。");
+                    throw new IOException(UiText.T("旧目录仍有动态替换记录，请先点击“恢复原资源”，再对当前版本替换。旧备份不会自动覆盖新版。"));
                 _root = installRoot;
             }
             if (!_animationCurrent) await GenerateAnimationAsync(token);
@@ -285,24 +286,24 @@ public sealed class AnimatedPortraitDialog : Form
             token.ThrowIfCancellationRequested();
             _writing = true;
             _cancel.Enabled = false;
-            SetStatus("正在验证类型结构、备份并写入…");
+            SetStatus(UiText.T("正在验证类型结构、备份并写入…"));
             bool removeGreen = _removeGreen.Checked;
             await Task.Run(() => PortraitReplacement.Apply(new(_root, found.Runtime, null, _texture, usm, "", Independent: true, GameDirectory: _gameDirectory),
                 Path.Combine(_work, "preview.gif"), Path.GetFileName(_lastInput), removeGreen));
             _restore.Visible = _export.Visible = true;
             var binding = await Task.Run(() => PortraitReplacement.CheckCurrentBinding(_root, PortraitReplacement.ReadReceipt(_root), _gameDirectory));
             _export.Visible = binding.Current;
-            SetStatus(binding.Message + "\n" + Path.GetFileName(_lastInput) + " · 官方异画未改动。");
+            SetStatus(binding.Message + "\n" + Path.GetFileName(_lastInput) + UiText.T(" · 官方异画未改动。"));
         }
-        catch (OperationCanceledException) { SetStatus("已取消 · 未写入本次视频"); }
-        catch (Exception ex) { SetStatus("替换未完成：" + ex.Message); }
+        catch (OperationCanceledException) { SetStatus(UiText.T("已取消 · 未写入本次视频")); }
+        catch (Exception ex) { SetStatus(UiText.T("替换未完成：") + ex.Message); }
         finally { _writing = false; _operation.Dispose(); _operation = null; SetBusy(false); }
     }
 
     private async Task RestoreAsync()
     {
         if (_operation != null) return;
-        if (MessageBox.Show(this, "还原全部动态立绘 / 卡牌替换？\n恢复首次备份的程序集，并移除本工具新增的独立视频；旧槽位模式则恢复原来的两个资源包。其他 Mod 不动。", "恢复原资源", MessageBoxButtons.OKCancel) != DialogResult.OK) return;
+        if (MessageBox.Show(this, UiText.T("还原全部动态立绘 / 卡牌替换？\n恢复首次备份的程序集，并移除本工具新增的独立视频；旧槽位模式则恢复原来的两个资源包。其他 Mod 不动。"), UiText.T("恢复原资源"), MessageBoxButtons.OKCancel) != DialogResult.OK) return;
         _operation = new CancellationTokenSource();
         _writing = true;
         SetBusy(true);
@@ -317,9 +318,9 @@ public sealed class AnimatedPortraitDialog : Form
             _imageStream?.Dispose();
             _imageStream = null;
             _previewReady = false;
-            SetStatus("已恢复到首次动态替换前的资源");
+            SetStatus(UiText.T("已恢复到首次动态替换前的资源"));
         }
-        catch (Exception ex) { SetStatus("恢复未完成：" + ex.Message); }
+        catch (Exception ex) { SetStatus(UiText.T("恢复未完成：") + ex.Message); }
         finally { _writing = false; _operation.Dispose(); _operation = null; SetBusy(false); }
     }
 
@@ -332,20 +333,20 @@ public sealed class AnimatedPortraitDialog : Form
         {
             var receipt = PortraitReplacement.ReadReceipt(_root);
             var binding = await Task.Run(() => PortraitReplacement.CheckCurrentBinding(_root, receipt, _gameDirectory));
-            if (!binding.Current) throw new IOException(binding.Message + "\n不能导出未核验的旧动态包。");
-            using var save = new SaveFileDialog { Filter = "直接替换 ZIP|*.zip", FileName = _texture + "-动态替换.zip" };
+            if (!binding.Current) throw new IOException(binding.Message + UiText.T("\n不能导出未核验的旧动态包。"));
+            using var save = new SaveFileDialog { Filter = UiText.T("直接替换 ZIP|*.zip"), FileName = _texture + UiText.T("-动态替换.zip") };
             if (save.ShowDialog(this) != DialogResult.OK) return;
-            string history = Path.GetFullPath(Path.Combine(_root, "_原始备份", "动态立绘")) + Path.DirectorySeparatorChar;
+            string history = Path.GetFullPath(Path.Combine(_root, "_原始备份", UiText.T("动态立绘"))) + Path.DirectorySeparatorChar;
             if (Path.GetFullPath(save.FileName).StartsWith(history, StringComparison.OrdinalIgnoreCase))
-                throw new IOException("请导出到备份目录之外，避免覆盖恢复文件。");
+                throw new IOException(UiText.T("请导出到备份目录之外，避免覆盖恢复文件。"));
             _operation.Token.ThrowIfCancellationRequested();
             _writing = true;
             _cancel.Enabled = false;
             await Task.Run(() => File.Copy(receipt.ReplacementZip, save.FileName, true));
-            SetStatus("已导出直接替换 ZIP：" + Path.GetFileName(save.FileName) + "\n覆盖目录：" + _root);
+            SetStatus(UiText.T("已导出直接替换 ZIP：") + Path.GetFileName(save.FileName) + UiText.T("\n覆盖目录：") + _root);
         }
-        catch (OperationCanceledException) { SetStatus("已取消导出"); }
-        catch (Exception ex) { SetStatus("导出失败：" + ex.Message); }
+        catch (OperationCanceledException) { SetStatus(UiText.T("已取消导出")); }
+        catch (Exception ex) { SetStatus(UiText.T("导出失败：") + ex.Message); }
         finally { _writing = false; _operation.Dispose(); _operation = null; SetBusy(false); }
     }
 }

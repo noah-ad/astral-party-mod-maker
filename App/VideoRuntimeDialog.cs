@@ -2,9 +2,9 @@ namespace JixModMaker;
 
 public sealed class VideoRuntimeDialog : Form
 {
-    private readonly Label _status = new() { AutoSize = true, Dock = DockStyle.Fill, Text = "首次启用约需下载 117 MB，完成后可离线转换。" };
-    private readonly Button _install = Theme.FlatButton("下载并启用", 136);
-    private readonly Button _cancel = Theme.FlatButton("取消", 88);
+    private readonly Label _status = new() { AutoSize = true, Dock = DockStyle.Fill, Text = UiText.T("首次启用约需下载 117 MB，完成后可离线转换。") };
+    private readonly Button _install = Theme.FlatButton(UiText.T("下载并启用"));
+    private readonly Button _cancel = Theme.FlatButton(UiText.T("取消"), 88);
     private readonly ProgressBar _progress = new() { Dock = DockStyle.Fill, Height = 12, Style = ProgressBarStyle.Marquee, Visible = false };
     private CancellationTokenSource _operation;
 
@@ -19,7 +19,7 @@ public sealed class VideoRuntimeDialog : Form
     {
         SuspendLayout();
         WindowLayout.Configure(this);
-        Text = "视频转换组件 - " + AppBuildInfo.Version;
+        Text = UiText.T("视频转换组件 - ") + AppBuildInfo.Version;
         Font = Theme.UI(9f);
         BackColor = Theme.Bg;
         ForeColor = Theme.Text;
@@ -34,10 +34,10 @@ public sealed class VideoRuntimeDialog : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        var heading = new Label { Text = "启用视频 / GIF 转换", AutoSize = true, Font = Theme.UI(12f, true),
+        var heading = new Label { Text = UiText.T("启用视频 / GIF 转换"), AutoSize = true, Font = Theme.UI(12f, true),
             ForeColor = Theme.Accent, Padding = new Padding(0, 0, 0, 12) };
         var sources = new Label { AutoSize = true, Dock = DockStyle.Fill, Padding = new Padding(0, 0, 0, 14),
-            Text = "FFmpeg 8.1.1 · Gyan 官方发布页\nPython 3.11.9 · python.org\nCriCodecs 1.2.0 · PyPI\n\n下载到当前用户目录，校验 SHA256；不修改游戏或系统配置。" };
+            Text = UiText.T("FFmpeg 8.1.1 · Gyan 官方发布页\nPython 3.11.9 · python.org\nCriCodecs 1.2.0 · PyPI\n\n下载到当前用户目录，校验 SHA256；不修改游戏或系统配置。") };
         layout.Controls.Add(heading, 0, 0);
         layout.Controls.Add(sources, 0, 1);
         layout.Controls.Add(_status, 0, 2);
@@ -59,9 +59,9 @@ public sealed class VideoRuntimeDialog : Form
         if (VideoRuntime.IsReady)
         {
             bool bundled = VideoRuntime.HasFiles(VideoRuntime.ScriptRoot);
-            _status.Text = bundled ? "组件已随程序附带，可直接离线使用；检查不会下载文件。" : "组件已安装，可检查并重新下载。已校验的下载文件会复用。";
-            _install.Text = bundled ? "检查组件" : "检查 / 修复";
-            if (bundled) sources.Text = "FFmpeg 8.1.1\nPython 3.11.9\nCriCodecs 1.2.0\n\n已包含在 data/Tools/video；不需要联网下载或安装系统组件。";
+            _status.Text = bundled ? UiText.T("组件已随程序附带，可直接离线使用；检查不会下载文件。") : UiText.T("组件已安装，可检查并重新下载。已校验的下载文件会复用。");
+            _install.Text = bundled ? UiText.T("检查组件") : UiText.T("检查 / 修复");
+            if (bundled) sources.Text = UiText.T("FFmpeg 8.1.1\nPython 3.11.9\nCriCodecs 1.2.0\n\n已包含在 data/Tools/video；不需要联网下载或安装系统组件。");
             LayoutText();
         }
         _install.Click += async (_, _) => await InstallAsync();
@@ -77,7 +77,7 @@ public sealed class VideoRuntimeDialog : Form
         _install.Enabled = false;
         _progress.Visible = true;
         bool bundled = VideoRuntime.HasFiles(VideoRuntime.ScriptRoot);
-        _status.Text = bundled ? "正在检查随包视频组件..." : "正在准备下载...";
+        _status.Text = bundled ? UiText.T("正在检查随包视频组件...") : UiText.T("正在准备下载...");
         bool installed = false;
         try
         {
@@ -87,14 +87,14 @@ public sealed class VideoRuntimeDialog : Form
             else await VideoRuntime.InstallAsync(progress, _operation.Token);
             installed = true;
         }
-        catch (OperationCanceledException) { _status.Text = "已取消，未修改游戏；点击重试可复用已完成的下载。"; }
-        catch (Exception ex) { _status.Text = "启用未完成：" + ex.Message; }
+        catch (OperationCanceledException) { _status.Text = UiText.T("已取消，未修改游戏；点击重试可复用已完成的下载。"); }
+        catch (Exception ex) { _status.Text = UiText.T("启用未完成：") + ex.Message; }
         finally
         {
             _operation.Dispose();
             _operation = null;
             _install.Enabled = true;
-            _install.Text = "重新检查";
+            _install.Text = UiText.T("重新检查");
             _progress.Visible = false;
         }
         if (installed) { DialogResult = DialogResult.OK; Close(); }

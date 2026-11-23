@@ -7,13 +7,16 @@ public static class RuntimeBundleLocator
 {
     public sealed record Target(string Path, string Catalog, string Bundle, string Hash, string CacheRoot);
 
-    public static string GameDataCache(string gameDirectory)
+    public static string GameDataCache(string gameDirectory) => GameDataDirectory(gameDirectory) is { } data
+        ? Path.Combine(data, "com.unity.addressables", "AssetBundles") : null;
+
+    internal static string GameDataDirectory(string gameDirectory)
     {
         if (string.IsNullOrWhiteSpace(gameDirectory)) return null;
         for (var directory = new DirectoryInfo(Path.GetFullPath(gameDirectory)); directory != null; directory = directory.Parent)
             if (directory.Name.EndsWith("_Data", StringComparison.OrdinalIgnoreCase) &&
                 File.Exists(Path.Combine(directory.FullName, "StreamingAssets", "aa", "settings.json")))
-                return Path.Combine(directory.FullName, "com.unity.addressables", "AssetBundles");
+                return directory.FullName;
         return null;
     }
 
@@ -23,11 +26,11 @@ public static class RuntimeBundleLocator
     public static IReadOnlyList<string> CacheRoots(string cacheRoot, string gameDirectory = null)
     {
         string dataCache = GameDataCache(gameDirectory ?? cacheRoot);
-        string dataDirectory = dataCache == null ? null : Directory.GetParent(Directory.GetParent(dataCache)!.FullName)!.FullName;
+        string dataDirectory = GameDataDirectory(gameDirectory ?? cacheRoot);
         string executable = dataDirectory == null ? null : Path.Combine(Directory.GetParent(dataDirectory)!.FullName,
             Path.GetFileName(dataDirectory)[..^"_Data".Length] + ".exe");
         // A real local player shares its user catalog with the installation cache. Isolated resource copies do not.
-        string userCache = File.Exists(executable) ? IndexService.HotCacheDir() : null;
+        string userCache = File.Exists(executable) ? IndexService.UserCacheFor(dataDirectory) : null;
         return new[] { cacheRoot, dataCache, userCache }.Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(path => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path))).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
@@ -41,7 +44,9 @@ public static class RuntimeBundleLocator
             if (dataCache != null)
                 gameDirectory = Path.Combine(Directory.GetParent(Directory.GetParent(dataCache)!.FullName)!.FullName,
                     "StreamingAssets", "aa", "StandaloneWindows64");
-            else if (SamePath(cacheRoot, IndexService.HotCacheDir())) gameDirectory = GameLocator.Find()?.AaDir;
+            else if (IndexService.UserCacheFor(cacheRoot) != null)
+                gameDirectory = GameLocator.Find(CancellationToken.None,
+                    SamePath(cacheRoot, IndexService.HotCacheDir(GameEdition.International)) ? GameEdition.International : GameEdition.China)?.AaDir;
         }
         string settings = SettingsPath(gameDirectory);
         var cacheRoots = CacheRoots(cacheRoot, gameDirectory);

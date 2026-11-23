@@ -5,9 +5,83 @@ static void Check(bool condition, string name)
     if (!condition) throw new Exception(name);
     Console.WriteLine("PASS " + name);
 }
-if (args.Length == 2 && args[0] == "--dpi-ui")
+if (args.Length == 1 && args[0] == "--mobile-unit")
 {
-    DpiLayoutChecks.Run(args[1], Check);
+    MobileExportChecks.Run(Check);
+    return;
+}
+if (args.Length == 3 && args[0] == "--mobile-write-probe")
+{
+    MobileExportChecks.DeviceIntegrity(args[1], args[2], Check);
+    return;
+}
+if (args.Length == 3 && args[0] == "--mobile-repeat")
+{
+    MobileExportChecks.Repeat(args[1], args[2], Check);
+    return;
+}
+if (args.Length == 3 && args[0] == "--mobile-verify")
+{
+    var manifest = MobileTexturePackage.Read(args[1]);
+    using var zip = System.IO.Compression.ZipFile.OpenRead(args[1]);
+    using var source = zip.GetEntry(manifest.CatalogName)!.Open();
+    using var buffer = new MemoryStream();
+    source.CopyTo(buffer);
+    AndroidTextureCatalog.VerifyUpdate(File.ReadAllBytes(args[2]), buffer.ToArray());
+    Check(true, $"all {manifest.Files.Count} mobile archive files and texture-only catalog changes verified");
+    return;
+}
+if (args.Length == 4 && args[0] == "--mobile-install")
+{
+    var device = new AndroidModInstaller(args[2]) { Progress = Console.WriteLine };
+    var result = device.Install(args[1], args[3]);
+    Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(result, MobileTexturePackage.Json));
+    return;
+}
+if (args.Length == 3 && args[0] == "--mobile-restore")
+{
+    new AndroidModInstaller(args[2]).Restore(args[1]);
+    Console.WriteLine("Mobile catalog restored and verified.");
+    return;
+}
+if (args.Length == 2 && args[0] is "--mobile-live" or "--mobile-sample")
+{
+    MobileExportChecks.Live(args[1], args[0] == "--mobile-sample", Check);
+    return;
+}
+if (args.Length == 2 && args[0] is "--dpi-ui" or "--dpi-ui-en")
+{
+    DpiLayoutChecks.Run(args[1], Check, args[0] == "--dpi-ui-en");
+    return;
+}
+if (args.Length is 2 or 3 && args[0] == "--studio-ui")
+{
+    StudioNavigationChecks.Run(args[1], args.ElementAtOrDefault(2), Check);
+    return;
+}
+if (args.Length == 3 && args[0] == "--library-read-ui")
+{
+    LibraryReadChecks.Run(args[1], args[2], Check);
+    return;
+}
+if (args.Length == 4 && args[0] == "--international-live")
+{
+    InternationalEditionChecks.Live(args[1], args[2], args[3], Check);
+    return;
+}
+if (args.Length == 1 && args[0] == "--installation-cache")
+{
+    InstallationCacheChecks.Run(Check);
+    return;
+}
+if (args.Length == 3 && args[0] == "--installation-cache-live")
+{
+    InstallationCacheChecks.Live(args[1], args[2], Check);
+    return;
+}
+if (args.Length == 3 && args[0] == "--installation-cache-smoke")
+{
+    InstallationCacheChecks.Smoke(args[1], args[2], Check);
     return;
 }
 if (args.Length == 3 && args[0] == "--replacement-zip-smoke")
@@ -429,6 +503,8 @@ ModificationChecks.Run(Check);
 SkillMovieChecks.Run(Check);
 IndependentVideoChecks.Run(Check);
 RuntimeLocatorChecks.Run(Check);
+InstallationCacheChecks.Run(Check);
+MobileExportChecks.Run(Check);
 Check(NameParser.Parse("UT_Hero_Card_135").Skin == "原皮", "base skin label");
 var groupedSkill = NameParser.Parse("Talent-001", "115", "02", true, false);
 Check(groupedSkill.GroupKey == "角色 115" && groupedSkill.Skin == "皮肤02" && groupedSkill.Kind == "SkillAnimation",
@@ -537,6 +613,7 @@ Check(workspace.Entries.Single().ModifiedAt >= now, "replacement gets timestamp"
 
 var root = Path.Combine(AppContext.BaseDirectory, "fixtures-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
+InternationalEditionChecks.Layout(root, Check);
 RestoreChecks.Run(root, Check);
 var installRoot = Path.Combine(root, "install");
 Directory.CreateDirectory(installRoot);

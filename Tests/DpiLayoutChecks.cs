@@ -14,10 +14,14 @@ internal static class DpiLayoutChecks
     private static IEnumerable<Control> All(Control root) =>
         new[] { root }.Concat(root.Controls.Cast<Control>().SelectMany(All));
 
-    public static void Run(string output, Action<bool, string> check)
+    public static void Run(string output, Action<bool, string> check, bool english = false)
     {
         output = Path.GetFullPath(output);
         Directory.CreateDirectory(output);
+        string settings = Path.Combine(output, "settings");
+        Directory.CreateDirectory(settings);
+        File.WriteAllText(Path.Combine(settings, "ui-language.txt"), english ? "en" : "zh-CN");
+        AppContext.SetData("JixModMaker.SettingsDirectory", settings);
         Exception failure = null;
         var thread = new Thread(() =>
         {
@@ -168,11 +172,23 @@ internal static class DpiLayoutChecks
                         var range = All(dialog).OfType<ComboBox>().Single();
                         range.SelectedIndex = 1;
                         check(dialog.SelectedEntries.Count == 1, $"export {dpi}: recent filter keeps the matching entry");
-                        All(dialog).OfType<Button>().Single(b => b.Text == "清空选择").PerformClick();
+                        All(dialog).OfType<Button>().Single(b => b.Text == (english ? "Clear selection" : "清空选择")).PerformClick();
                         check(dialog.SelectedEntries.Count == 0, $"export {dpi}: clear selection works");
-                        All(dialog).OfType<Button>().Single(b => b.Text == "全选当前结果").PerformClick();
+                        All(dialog).OfType<Button>().Single(b => b.Text == (english ? "Select results" : "全选当前结果")).PerformClick();
                         check(dialog.SelectedEntries.Count == 1, $"export {dpi}: select all works");
                         Snapshot(dialog, "export");
+                        dialog.Close();
+                    }
+                    using (var dialog = new MobileExportDialog(new[]
+                    {
+                        new MobileTexturePackage.ImageSource("UT_Hero_Card_301", "test.jxpack", () => Array.Empty<byte>())
+                    }))
+                    {
+                        Prepare(dialog, new Size(700, 580));
+                        Settle(dialog);
+                        Buttons(dialog, "mobile-export");
+                        check(All(dialog).OfType<ListView>().Single().Height >= 80 * scale, $"mobile-export {dpi}: resource selection stays usable");
+                        Snapshot(dialog, "mobile-export");
                         dialog.Close();
                     }
                     using (var dialog = new AnimatedPortraitDialog(output, "UT_Hero_Card_101"))

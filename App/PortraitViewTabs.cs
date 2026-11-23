@@ -25,7 +25,7 @@ public sealed class PortraitViewTabs : Control
         ForeColor = Theme.Text;
         Cursor = Cursors.Hand;
         TabStop = true;
-        AccessibleName = "取景与动态预览";
+        AccessibleName = UiText.T("取景与动态预览");
         AccessibleRole = AccessibleRole.PageTabList;
     }
     private int TabWidth => (int)(124 * DeviceDpi / 96f);
@@ -34,7 +34,7 @@ public sealed class PortraitViewTabs : Control
         base.OnPaint(e);
         using var line = new Pen(Theme.Line);
         e.Graphics.DrawLine(line, 0, Height - 1, Width, Height - 1);
-        string[] labels = { "取景", "动态预览" };
+        string[] labels = { UiText.T("取景"), UiText.T("动态预览") };
         for (int i = 0; i < labels.Length; i++)
         {
             var bounds = new Rectangle(i * TabWidth, 0, TabWidth, Height - 4);

@@ -18,7 +18,7 @@ public sealed record VideoCrop(double X, double Y, double Width, double Height)
     public string Filter()
     {
         if (!new[] { X, Y, Width, Height }.All(double.IsFinite) || X < 0 || Y < 0 || Width <= 0 || Height <= 0 || X + Width > 1.000001 || Y + Height > 1.000001)
-            throw new InvalidDataException("取景范围超出视频边界。");
+            throw new InvalidDataException(UiText.T("取景范围超出视频边界。"));
         return FormattableString.Invariant($"crop=w='max(2,round(iw*{Width:0.########}))':h='max(2,round(ih*{Height:0.########}))':x='round(iw*{X:0.########})':y='round(ih*{Y:0.########})':exact=1");
     }
 }
@@ -40,7 +40,7 @@ public sealed class VideoCropControl : Control
         BackColor = Theme.PicBg;
         Cursor = Cursors.Hand;
         TabStop = true;
-        AccessibleName = "视频取景范围";
+        AccessibleName = UiText.T("视频取景范围");
     }
     public void SetSource(Image image, Size target)
     {

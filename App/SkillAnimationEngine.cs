@@ -60,7 +60,7 @@ public static class SkillAnimationEngine
         File.Copy(bundlePath, rollback, true);
         try
         {
-            progress?.Report("正在写入重建后的技能动画图集...");
+            progress?.Report(UiText.T("正在写入重建后的技能动画图集..."));
             await Task.Run(() => new ModEngine().ReplaceInPlaceFromBytes(bundlePath, layout.Info.TexturePathId,
                 atlas, backupDir, backupName), token);
             token.ThrowIfCancellationRequested();
@@ -85,7 +85,7 @@ public static class SkillAnimationEngine
         string frameDirectory = Path.Combine(work, "skill-frames");
         if (Directory.Exists(frameDirectory)) Directory.Delete(frameDirectory, true);
         Directory.CreateDirectory(frameDirectory);
-        progress?.Report($"正在提取并采样 {layout.Frames.Count} 帧技能动画...");
+        progress?.Report(UiText.F($"正在提取并采样 {layout.Frames.Count} 帧技能动画..."));
         string pattern = Path.Combine(frameDirectory, "frame-%05d.png");
         int decodeLimit = Math.Max(360, layout.Frames.Count * 3);
         int filterSize = Math.Max(2048, Math.Max(layout.Info.FrameWidth, layout.Info.FrameHeight));
@@ -100,7 +100,7 @@ public static class SkillAnimationEngine
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
         if (decodedFrames.Length == 0) throw new InvalidDataException("没有从视频中解码出可用画面。");
 
-        progress?.Report("正在按原生 Sprite 网格重建图集...");
+        progress?.Report(UiText.T("正在按原生 Sprite 网格重建图集..."));
         byte[] original = await Task.Run(() => new ModEngine().DecodePng(bundlePath, layout.Info.TexturePathId, 0), token);
         using var atlas = SharpImage.Load<Rgba32>(original);
         if (atlas.Width != layout.Info.AtlasWidth || atlas.Height != layout.Info.AtlasHeight)

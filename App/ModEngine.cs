@@ -95,26 +95,7 @@ public class ModEngine
         => ListTextureHeaders(bundlePath);
 
     /// <summary>只读 Texture2D 元数据；不扫其它资产，不导出像素，用于快速索引。</summary>
-    public List<TexRef> ListTextureHeaders(string bundlePath)
-    {
-        var result = new List<TexRef>();
-        var am = NewManager();
-        try
-        {
-            var bun = am.LoadBundleFile(bundlePath);
-            var afile = am.LoadAssetsFileFromBundle(bun, 0, false);
-            if (am.ClassDatabase == null && am.ClassPackage != null)
-                am.LoadClassDatabaseFromPackage(afile.file.Metadata.UnityVersion);
-
-            foreach (var info in afile.file.GetAssetsOfType(AssetClassID.Texture2D))
-            {
-                var tex = ReadTextureHeader(am, afile, info, bundlePath);
-                if (tex != null) result.Add(tex);
-            }
-        }
-        finally { am.UnloadAll(); }
-        return result;
-    }
+    public List<TexRef> ListTextureHeaders(string bundlePath) => new BundleHeaderReader(this).Read(bundlePath, false);
 
     public TexRef FindTextureByName(string bundlePath, string textureName)
     {
@@ -163,28 +144,74 @@ public class ModEngine
     }
 
     /// <summary>列出一个 bundle / __data 里的常用 Unity 资源。</summary>
-    public List<TexRef> ListAssets(string bundlePath)
+    public List<TexRef> ListAssets(string bundlePath) => new BundleHeaderReader(this).Read(bundlePath, true);
+
+    internal sealed class BundleHeaderReader
     {
-        var result = new List<TexRef>();
-        var am = NewManager();
-        try
+        private readonly AssetsManager _manager;
+        private string _unityVersion;
+
+        public BundleHeaderReader(ModEngine engine) => _manager = engine.NewManager();
+
+        public List<TexRef> Read(string bundlePath, bool advanced)
         {
-            var bun = am.LoadBundleFile(bundlePath);
-            var afile = am.LoadAssetsFileFromBundle(bun, 0, false);
-            if (am.ClassDatabase == null && am.ClassPackage != null)
-                am.LoadClassDatabaseFromPackage(afile.file.Metadata.UnityVersion);
+            var result = new List<TexRef>();
+            using var source = new FileStream(bundlePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            try
+            {
+                var bun = _manager.LoadBundleFile(source);
+                var file = _manager.LoadAssetsFileFromBundle(bun, 0, false);
+                if (file == null) return result;
+                string version = file.file.Metadata.UnityVersion;
+                if (_manager.ClassPackage != null && _unityVersion != version)
+                {
+                    _manager.LoadClassDatabaseFromPackage(version);
+                    _unityVersion = version;
+                }
 
-            foreach (var info in afile.file.GetAssetsOfType(AssetClassID.Texture2D))
-                if (ReadTextureHeader(am, afile, info, bundlePath) is { } tex)
-                    result.Add(tex);
+                var prefixes = new Dictionary<int, AssetTypeTemplateField>();
+                foreach (var info in file.file.GetAssetsOfType(AssetClassID.Texture2D))
+                {
+                    AssetTypeValueField fields = null;
+                    try
+                    {
+                        if (!prefixes.TryGetValue(info.TypeIdOrIndex, out var prefix))
+                            prefixes[info.TypeIdOrIndex] = prefix = HeaderTemplate(_manager.GetTemplateBaseField(file, info));
+                        fields = prefix?.MakeValue(file.file.Reader, info.GetAbsoluteByteStart(file.file));
+                    }
+                    catch (Exception ex) when (ex is not OutOfMemoryException) { }
+                    if (ReadTextureHeader(_manager, file, info, bundlePath, fields) is { } texture) result.Add(texture);
+                }
 
-            AddNamedAssets(am, afile, bundlePath, AssetClassID.AudioClip, ResourceKinds.Audio, result);
-            AddNamedAssets(am, afile, bundlePath, AssetClassID.TextAsset, ResourceKinds.Text, result);
-            AddNamedAssets(am, afile, bundlePath, AssetClassID.Mesh, ResourceKinds.Mesh, result);
-            AddNamedAssets(am, afile, bundlePath, AssetClassID.AnimationClip, ResourceKinds.Animation, result);
+                if (advanced)
+                {
+                    AddNamedAssets(_manager, file, bundlePath, AssetClassID.AudioClip, ResourceKinds.Audio, result);
+                    AddNamedAssets(_manager, file, bundlePath, AssetClassID.TextAsset, ResourceKinds.Text, result);
+                    AddNamedAssets(_manager, file, bundlePath, AssetClassID.Mesh, ResourceKinds.Mesh, result);
+                    AddNamedAssets(_manager, file, bundlePath, AssetClassID.AnimationClip, ResourceKinds.Animation, result);
+                }
+                return result;
+            }
+            finally { _manager.UnloadAll(false); }
         }
-        finally { am.UnloadAll(); }
-        return result;
+
+        // Use the bundle's own type tree and stop before inline image data.
+        private static AssetTypeTemplateField HeaderTemplate(AssetTypeTemplateField template)
+        {
+            if (template?.Children == null) return null;
+            var fields = template.Children;
+            int last = -1;
+            foreach (string key in new[] { "m_Name", "m_Width", "m_Height", "m_TextureFormat" })
+            {
+                int index = fields.FindIndex(field => field.Name == key);
+                if (index < 0) return null;
+                last = Math.Max(last, index);
+            }
+            int image = fields.FindIndex(field => field.ValueType == AssetValueType.ByteArray);
+            if (image >= 0 && image < last) return null;
+            return new AssetTypeTemplateField { Name = template.Name, Type = template.Type,
+                ValueType = template.ValueType, Children = fields.GetRange(0, last + 1) };
+        }
     }
 
     private static void AddNamedAssets(AssetsManager am, AssetsFileInstance afile, string bundlePath,
@@ -279,32 +306,24 @@ public class ModEngine
     }
 
     /// <summary>用图片文件替换指定贴图, 原地写回 bundle (先备份)。</summary>
-    public void ReplaceInPlace(string bundlePath, long pathId, string newImagePath, string backupDir, string backupName = null)
+    public void ReplaceInPlace(string bundlePath, long pathId, string newImagePath, string backupDir, string backupName = null, string expectedName = null)
     {
         using var img = Image.Load<Rgba32>(newImagePath);
-        ReplaceCore(bundlePath, pathId, img, backupDir, backupName);
+        ReplaceCore(bundlePath, pathId, img, backupDir, backupName, expectedName);
     }
 
     /// <summary>用图片字节 (如图包内的 PNG) 替换指定贴图, 原地写回 bundle (先备份)。</summary>
-    public void ReplaceInPlaceFromBytes(string bundlePath, long pathId, byte[] pngBytes, string backupDir, string backupName = null)
+    public void ReplaceInPlaceFromBytes(string bundlePath, long pathId, byte[] pngBytes, string backupDir, string backupName = null, string expectedName = null)
     {
         using var img = Image.Load<Rgba32>(pngBytes);
-        ReplaceCore(bundlePath, pathId, img, backupDir, backupName);
+        ReplaceCore(bundlePath, pathId, img, backupDir, backupName, expectedName);
     }
 
     /// <summary>
     /// 核心: 把图写回 Texture2D (RGBA32 未压缩, 库无 BC7 编码器)。允许尺寸不同。
     /// </summary>
-    private void ReplaceCore(string bundlePath, long pathId, Image<Rgba32> img, string backupDir, string backupName = null)
+    private void ReplaceCore(string bundlePath, long pathId, Image<Rgba32> img, string backupDir, string backupName, string expectedName)
     {
-        // 1. 首次修改该 bundle 时自动备份原始文件
-        if (!string.IsNullOrEmpty(backupDir))
-        {
-            string backup = ResourceLocator.BackupPath(bundlePath, backupDir, backupName);
-            Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
-            if (!File.Exists(backup)) File.Copy(bundlePath, backup);
-        }
-
         // 2. 图 -> RGBA32 bottom-up
         img.Mutate(c => c.Flip(FlipMode.Vertical));
         int nw = img.Width, nh = img.Height;
@@ -312,47 +331,55 @@ public class ModEngine
         img.CopyPixelDataTo(rgba);
 
         // 3. 打开 bundle, 改字段
-        string tmp = bundlePath + ".tmp";
-        var am = NewManager();
+        string tmp = bundlePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            var bun = am.LoadBundleFile(bundlePath);
-            var afile = am.LoadAssetsFileFromBundle(bun, 0, false);
-            if (am.ClassDatabase == null && am.ClassPackage != null)
-                am.LoadClassDatabaseFromPackage(afile.file.Metadata.UnityVersion);
-
-            var info = afile.file.GetAssetsOfType(AssetClassID.Texture2D)
-                .First(i => i.PathId == pathId);
-            var bf = am.GetBaseField(afile, info);
-
-            bf["m_Width"].AsInt = nw;
-            bf["m_Height"].AsInt = nh;
-            bf["m_TextureFormat"].AsInt = (int)TextureFormat.RGBA32;
-            bf["m_MipCount"].AsInt = 1;
-            if (bf["m_CompleteImageSize"] != null && !bf["m_CompleteImageSize"].IsDummy)
-                bf["m_CompleteImageSize"].AsInt = rgba.Length;
-            bf["image data"].AsByteArray = rgba;
-            var sd = bf["m_StreamData"];
-            sd["offset"].AsLong = 0; sd["size"].AsLong = 0; sd["path"].AsString = "";
-
-            // 4. 重打包 (2.x replacer 模式)
-            var replacers = new List<AssetsReplacer> { new AssetsReplacerFromMemory(afile.file, info, bf) };
-            byte[] afileBytes;
-            using (var msm = new MemoryStream())
+            WriteReplacement();
+            if (!string.IsNullOrEmpty(backupDir))
             {
-                using var w2 = new AssetsFileWriter(msm);
-                afile.file.Write(w2, 0, replacers, null);
-                afileBytes = msm.ToArray();
+                string backup = ResourceLocator.BackupPath(bundlePath, backupDir, backupName);
+                Directory.CreateDirectory(Path.GetDirectoryName(backup)!);
+                if (!File.Exists(backup)) File.Copy(bundlePath, backup);
             }
-            var bundleRepl = new BundleReplacerFromMemory(afile.name, afile.name, true, afileBytes, -1);
-            using (var bw = new AssetsFileWriter(tmp))
-                bun.file.Write(bw, new List<BundleReplacer> { bundleRepl });
+            File.Move(tmp, bundlePath, true);
         }
-        finally { am.UnloadAll(); }
+        finally { if (File.Exists(tmp)) File.Delete(tmp); }
 
-        // 5. 用临时文件替换原 bundle
-        File.Delete(bundlePath);
-        File.Move(tmp, bundlePath);
+        void WriteReplacement()
+        {
+            var am = NewManager();
+            try
+            {
+                var bun = am.LoadBundleFile(bundlePath);
+                var afile = am.LoadAssetsFileFromBundle(bun, 0, false);
+                if (am.ClassDatabase == null && am.ClassPackage != null)
+                    am.LoadClassDatabaseFromPackage(afile.file.Metadata.UnityVersion);
+
+                var info = afile.file.GetAssetsOfType(AssetClassID.Texture2D).First(i => i.PathId == pathId);
+                var bf = am.GetBaseField(afile, info);
+                if (expectedName != null && !string.Equals(bf["m_Name"].AsString, expectedName, StringComparison.Ordinal))
+                    throw new InvalidDataException("贴图名称已变化，请刷新索引后重试：" + expectedName);
+
+                bf["m_Width"].AsInt = nw;
+                bf["m_Height"].AsInt = nh;
+                bf["m_TextureFormat"].AsInt = (int)TextureFormat.RGBA32;
+                bf["m_MipCount"].AsInt = 1;
+                if (bf["m_CompleteImageSize"] != null && !bf["m_CompleteImageSize"].IsDummy)
+                    bf["m_CompleteImageSize"].AsInt = rgba.Length;
+                bf["image data"].AsByteArray = rgba;
+                var sd = bf["m_StreamData"];
+                sd["offset"].AsLong = 0; sd["size"].AsLong = 0; sd["path"].AsString = "";
+
+                var replacers = new List<AssetsReplacer> { new AssetsReplacerFromMemory(afile.file, info, bf) };
+                using var buffer = new MemoryStream();
+                using var writer = new AssetsFileWriter(buffer);
+                afile.file.Write(writer, 0, replacers, null);
+                var bundleRepl = new BundleReplacerFromMemory(afile.name, afile.name, true, buffer.ToArray(), -1);
+                using var bw = new AssetsFileWriter(tmp);
+                bun.file.Write(bw, new List<BundleReplacer> { bundleRepl });
+            }
+            finally { am.UnloadAll(); }
+        }
     }
 
     /// <summary>从备份还原一个 bundle。</summary>

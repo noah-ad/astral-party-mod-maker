@@ -242,7 +242,7 @@ public static class SkillMovieEngine
         string installedHash = null;
         try
         {
-            progress?.Report("正在封装技能特写并校验未修改的资源...");
+            progress?.Report(UiText.T("正在封装技能特写并校验未修改的资源..."));
             await Task.Run(() => Rebuild(before, stage, asset.Name, usm), token);
             token.ThrowIfCancellationRequested();
             PortraitReplacement.EnsureGameClosed();

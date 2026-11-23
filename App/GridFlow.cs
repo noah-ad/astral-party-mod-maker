@@ -11,6 +11,7 @@ namespace JixModMaker;
 /// </summary>
 public sealed class GridFlow : FlowLayoutPanel
 {
+    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); StudioPaint.DarkScroll(this); }
     public GridFlow()
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |
@@ -81,6 +82,7 @@ public sealed class GridFlow : FlowLayoutPanel
 /// </summary>
 public sealed class SideListFlow : FlowLayoutPanel
 {
+    protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); StudioPaint.DarkScroll(this); }
     public SideListFlow()
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint |

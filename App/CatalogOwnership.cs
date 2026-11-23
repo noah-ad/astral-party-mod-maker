@@ -36,7 +36,7 @@ public static class CatalogOwnership
         public List<SkillMovieEntry> Movies { get; set; } = new();
     }
 
-    public static Dictionary<string, CharacterAssetOwner> Load(string gameDir, IEnumerable<string> bundleNames)
+    public static Dictionary<string, CharacterAssetOwner> Load(string gameDir, IEnumerable<string> bundleNames, bool includeHotCache = true)
     {
         var wanted = bundleNames
             .Select(name => Path.GetFileName((name ?? "").Replace('/', Path.DirectorySeparatorChar)))
@@ -45,7 +45,7 @@ public static class CatalogOwnership
         if (wanted.Count == 0) return new(StringComparer.OrdinalIgnoreCase);
 
         var result = new Dictionary<string, CharacterAssetOwner>(StringComparer.OrdinalIgnoreCase);
-        foreach (var catalog in CatalogCandidates(gameDir))
+        foreach (var catalog in CatalogCandidates(gameDir, includeHotCache))
         {
             try
             {
@@ -107,7 +107,7 @@ public static class CatalogOwnership
             if (MemoryCache.TryGetValue(fullPath, out var memory) && Current(memory)) return memory;
         try
         {
-            string cachePath = CachePath();
+            string cachePath = CachePath(fullPath);
             if (File.Exists(cachePath))
             {
                 var cache = JsonSerializer.Deserialize<OwnershipCache>(File.ReadAllText(cachePath));
@@ -131,7 +131,7 @@ public static class CatalogOwnership
         lock (MemoryCache) MemoryCache[fullPath] = updated;
         try
         {
-            string cachePath = CachePath();
+            string cachePath = CachePath(fullPath);
             Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
             File.WriteAllText(cachePath, JsonSerializer.Serialize(updated));
         }
@@ -241,10 +241,11 @@ public static class CatalogOwnership
     private static int OwnerRank(CharacterAssetOwner owner) => owner.CatalogKey.StartsWith("Hero", StringComparison.OrdinalIgnoreCase) ? 3
         : owner.IsMonster ? 2 : 1;
 
-    private static string CachePath()
+    private static string CachePath(string catalog)
     {
         string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JixModMaker");
-        return Path.Combine(dir, $"catalog_owners_v{OwnershipCacheVersion}.json");
+        string key = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(catalog.ToLowerInvariant())))[..12];
+        return Path.Combine(dir, $"catalog_owners_v{OwnershipCacheVersion}_{key}.json");
     }
 
     private static string ReadKey(byte[] data, int offset, Func<byte[], int, int> readInt)
@@ -263,8 +264,11 @@ public static class CatalogOwnership
     private static IEnumerable<string> CatalogCandidates(string gameDir, bool includeHotCache = true)
     {
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var hotParent = includeHotCache ? Directory.GetParent(IndexService.HotCacheDir())?.FullName : null;
-        foreach (var root in new[] { hotParent, gameDir, Directory.GetParent(gameDir ?? "")?.FullName })
+        string hot = includeHotCache ? IndexService.UserCacheFor(gameDir) : null;
+        string installed = includeHotCache ? RuntimeBundleLocator.GameDataCache(gameDir) : null;
+        var hotParent = hot == null ? null : Directory.GetParent(hot)?.FullName;
+        var installedParent = installed == null ? null : Directory.GetParent(installed)?.FullName;
+        foreach (var root in new[] { hotParent, installedParent, gameDir, Directory.GetParent(gameDir ?? "")?.FullName })
         {
             if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) continue;
             foreach (var path in Directory.EnumerateFiles(root, "catalog*.json", SearchOption.TopDirectoryOnly)

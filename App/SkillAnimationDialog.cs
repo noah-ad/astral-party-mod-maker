@@ -8,17 +8,17 @@ public sealed class SkillAnimationDialog : Form
     private int TargetWidth => _movie?.Timing.Width ?? _info.FrameWidth;
     private int TargetHeight => _movie?.Timing.Height ?? _info.FrameHeight;
     private int FrameCount => _movie?.Timing.TotalFrames ?? _info.FrameNames.Count;
-    private string KindLabel => _movie != null ? "技能特写" : "Q版动作";
+    private string KindLabel => _movie != null ? UiText.T("技能特写") : UiText.T("Q版动作");
     private readonly string _backupDir;
     private readonly string _initialFile;
     private readonly string _work = Path.Combine(Path.GetTempPath(), "JixSkillAnimation-" + Guid.NewGuid().ToString("N"));
     private readonly PictureBox _preview = new() { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Theme.PicBg };
     private readonly Label _status = new() { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(0, 8, 0, 8) };
-    private readonly CheckBox _removeGreen = new() { Text = "去绿幕", AutoSize = true };
-    private readonly Button _choose = Theme.FlatButton("选择视频");
-    private readonly Button _replace = Theme.FlatButton("替换技能动画");
-    private readonly Button _restore = Theme.FlatButton("还原当前资源包");
-    private readonly Button _close = Theme.FlatButton("关闭");
+    private readonly CheckBox _removeGreen = new() { Text = UiText.T("去绿幕"), AutoSize = true };
+    private readonly Button _choose = Theme.FlatButton(UiText.T("选择视频"));
+    private readonly Button _replace = Theme.FlatButton(UiText.T("替换技能动画"));
+    private readonly Button _restore = Theme.FlatButton(UiText.T("还原当前资源包"));
+    private readonly Button _close = Theme.FlatButton(UiText.T("关闭"));
     private readonly VideoCropControl _crop = new() { Dock = DockStyle.Fill };
     private readonly PortraitViewTabs _views = new() { Dock = DockStyle.Top };
     private readonly Panel _viewHost = new() { Dock = DockStyle.Fill };
@@ -36,7 +36,7 @@ public sealed class SkillAnimationDialog : Form
 
     public bool Replaced { get; private set; }
     public bool Restored { get; private set; }
-    public string ResultMessage { get; private set; } = "尚未替换";
+    public string ResultMessage { get; private set; } = UiText.T("尚未替换");
 
     public SkillAnimationDialog(TexRef asset, SkillMovieInfo movie, string backupDir, string initialFile = null)
         : this(asset, null, backupDir, initialFile, movie) { }
@@ -51,8 +51,8 @@ public sealed class SkillAnimationDialog : Form
         if (info == null && movie == null) throw new ArgumentNullException(nameof(info));
         _backupDir = backupDir;
         _initialFile = initialFile;
-        Text = "替换" + KindLabel + " - " + AppBuildInfo.ReleaseLabel;
-        _replace.Text = "替换" + KindLabel;
+        _replace.Text = _movie != null ? UiText.T("替换技能特写") : UiText.T("替换Q版动作");
+        Text = _replace.Text + " · " + AppBuildInfo.ReleaseLabel;
         Font = Theme.UI(9f);
         BackColor = Theme.Bg;
         ForeColor = Theme.Text;
@@ -69,7 +69,7 @@ public sealed class SkillAnimationDialog : Form
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var header = new Label
         {
-            Text = $"{asset.Display ?? asset.Name}   ·   {FrameCount} 帧   ·   {TargetWidth}×{TargetHeight}",
+            Text = UiText.F($"{asset.Display ?? asset.Name}   ·   {FrameCount} 帧   ·   {TargetWidth}×{TargetHeight}"),
             AutoSize = true,
             Padding = new Padding(0, 0, 0, 12)
         };
@@ -84,7 +84,7 @@ public sealed class SkillAnimationDialog : Form
         cropLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         cropLayout.Controls.Add(_crop, 0, 0);
         var cropTools = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(0, 6, 0, 0) };
-        var center = Theme.FlatButton("居中");
+        var center = Theme.FlatButton(UiText.T("居中"));
         cropTools.Controls.AddRange(new Control[] { center, _zoom, _dimensions });
         cropLayout.Controls.Add(cropTools, 0, 1);
         _cropPage.Controls.Add(cropLayout);
@@ -97,8 +97,8 @@ public sealed class SkillAnimationDialog : Form
         _preview.Visible = false;
 
         center.Click += (_, _) => _crop.CenterCrop();
-        _tooltips.SetToolTip(_zoom, "取景缩放");
-        _tooltips.SetToolTip(_crop, "拖动取景框调整位置");
+        _tooltips.SetToolTip(_zoom, UiText.T("取景缩放"));
+        _tooltips.SetToolTip(_crop, UiText.T("拖动取景框调整位置"));
         _zoom.ValueChanged += (_, _) => _crop.SetZoom(_zoom.Value / 100f);
         _crop.CropChanged += (_, _) =>
         {
@@ -127,6 +127,7 @@ public sealed class SkillAnimationDialog : Form
 
         _replace.Enabled = false;
         _replace.BackColor = Theme.Accent;
+        _replace.ForeColor = Color.White;
         _restore.Visible = File.Exists(ResourceLocator.BackupPath(asset.BundlePath, backupDir, asset.BundleName));
         foreach (Control surface in new Control[] { this, _preview, _crop, layout })
         {
@@ -141,7 +142,7 @@ public sealed class SkillAnimationDialog : Form
         }
         _choose.Click += async (_, _) =>
         {
-            using var picker = new OpenFileDialog { Filter = "视频 / GIF|*.mp4;*.mov;*.webm;*.avi;*.mkv;*.gif" };
+            using var picker = new OpenFileDialog { Filter = UiText.T("视频 / GIF|*.mp4;*.mov;*.webm;*.avi;*.mkv;*.gif") };
             if (picker.ShowDialog(this) == DialogResult.OK) await LoadSourceAsync(picker.FileName);
         };
         _replace.Click += async (_, _) => await ReplaceAsync();
@@ -156,7 +157,7 @@ public sealed class SkillAnimationDialog : Form
         FormClosed += (_, _) => Cleanup();
         Shown += async (_, _) =>
         {
-            SetStatus("尚未选择视频 · " + KindLabel + " · 仅修改当前资源包");
+            SetStatus(UiText.T("尚未选择视频 · ") + KindLabel + UiText.T(" · 仅修改当前资源包"));
             if (_initialFile != null) await LoadSourceAsync(_initialFile);
         };
         ResumeLayout(true);
@@ -173,11 +174,11 @@ public sealed class SkillAnimationDialog : Form
     public static string TimingNotice(NativeMovieTiming timing, double? sourceSeconds)
     {
         if (timing == null) return "";
-        string original = $"原技能时长：{timing.Duration:0.###} 秒（{timing.TotalFrames} 帧，{timing.FramerateN / (double)timing.FramerateD:0.###} FPS）";
-        string source = sourceSeconds.HasValue ? $"输入文件约 {sourceSeconds:0.###} 秒。" : "";
+        string original = UiText.F($"原技能时长：{timing.Duration:0.###} 秒（{timing.TotalFrames} 帧，{timing.FramerateN / (double)timing.FramerateD:0.###} FPS）");
+        string source = sourceSeconds.HasValue ? UiText.F($"输入文件约 {sourceSeconds:0.###} 秒。") : "";
         string change = WillTrim(timing, sourceSeconds)
-            ? $"将截掉约 {sourceSeconds.Value - timing.Duration:0.###} 秒；仅保留开头 {timing.Duration:0.###} 秒。"
-            : $"输出固定 {timing.Duration:0.###} 秒，超出截断，不足停留末帧。";
+            ? UiText.F($"将截掉约 {sourceSeconds.Value - timing.Duration:0.###} 秒；仅保留开头 {timing.Duration:0.###} 秒。")
+            : UiText.F($"输出固定 {timing.Duration:0.###} 秒，超出截断，不足停留末帧。");
         return original + "\n" + source + change;
     }
 
@@ -194,15 +195,15 @@ public sealed class SkillAnimationDialog : Form
         _choose.Enabled = _removeGreen.Enabled = _restore.Enabled = _crop.Enabled = _zoom.Enabled = !busy;
         _views.Enabled = _viewHost.Enabled = !busy;
         _replace.Enabled = !busy && _sourceReady;
-        _close.Text = busy ? "取消" : "关闭";
+        _close.Text = busy ? UiText.T("取消") : UiText.T("关闭");
         _close.Enabled = true;
     }
 
     private async Task LoadSourceAsync(string input)
     {
         if (_operation != null) return;
-        if (!IsSource(input) || !File.Exists(input)) { SetStatus("请选择视频或 GIF 文件。"); return; }
-        if (!VideoRuntimeDialog.EnsureReady(this)) { SetStatus("视频组件尚未启用 · 未写入"); return; }
+        if (!IsSource(input) || !File.Exists(input)) { SetStatus(UiText.T("请选择视频或 GIF 文件。")); return; }
+        if (!VideoRuntimeDialog.EnsureReady(this)) { SetStatus(UiText.T("视频组件尚未启用 · 未写入")); return; }
         _input = input;
         _sourceDuration = null;
         UpdateTimingNotice();
@@ -213,7 +214,7 @@ public sealed class SkillAnimationDialog : Form
         {
             Directory.CreateDirectory(_work);
             if (_movie != null) await PortraitVideoConverter.EnsureConversionAvailableAsync(PortraitVideoSettings.Load(), _operation.Token);
-            SetStatus("正在读取视频取景…");
+            SetStatus(UiText.T("正在读取视频取景…"));
             string framePath = Path.Combine(_work, "source.png");
             await PortraitVideoConverter.SourceFrameAsync(input, framePath, PortraitVideoSettings.Load(), _operation.Token);
             if (_movie != null)
@@ -231,11 +232,11 @@ public sealed class SkillAnimationDialog : Form
             _views.SelectedIndex = 0;
             _previewCurrent = false;
             _sourceReady = true;
-            SetStatus(_movie == null ? $"取景已就绪 · 将采样为 {FrameCount} 帧 · 尚未写入"
-                : $"取景已就绪 · 保留原生 {_movie.Timing.Duration:0.##} 秒；超出截断，不足停留末帧 · 尚未写入");
+            SetStatus(_movie == null ? UiText.F($"取景已就绪 · 将采样为 {FrameCount} 帧 · 尚未写入")
+                : UiText.F($"取景已就绪 · 保留原生 {_movie.Timing.Duration:0.##} 秒；超出截断，不足停留末帧 · 尚未写入"));
         }
-        catch (OperationCanceledException) { SetStatus("预览已取消 · 未写入"); }
-        catch (Exception ex) { SetStatus("读取失败 · 未写入：" + ex.Message); }
+        catch (OperationCanceledException) { SetStatus(UiText.T("预览已取消 · 未写入")); }
+        catch (Exception ex) { SetStatus(UiText.T("读取失败 · 未写入：") + ex.Message); }
         finally { _operation.Dispose(); _operation = null; SetBusy(false); }
     }
 
@@ -253,12 +254,12 @@ public sealed class SkillAnimationDialog : Form
         SetBusy(true);
         try
         {
-            SetStatus("正在生成裁剪后的动态预览…");
+            SetStatus(UiText.T("正在生成裁剪后的动态预览…"));
             await GeneratePreviewAsync(_operation.Token);
-            SetStatus($"预览已就绪 · 实际写入 {FrameCount} 帧 · {TargetWidth}×{TargetHeight}");
+            SetStatus(UiText.F($"预览已就绪 · 实际写入 {FrameCount} 帧 · {TargetWidth}×{TargetHeight}"));
         }
-        catch (OperationCanceledException) { SetStatus("预览已取消"); }
-        catch (Exception ex) { SetStatus("预览失败：" + ex.Message); }
+        catch (OperationCanceledException) { SetStatus(UiText.T("预览已取消")); }
+        catch (Exception ex) { SetStatus(UiText.T("预览失败：") + ex.Message); }
         finally { _operation.Dispose(); _operation = null; SetBusy(false); }
     }
 
@@ -266,9 +267,9 @@ public sealed class SkillAnimationDialog : Form
     {
         if (_operation != null || !_sourceReady) return;
         if (MessageBox.Show(this,
-            $"将视频写入 {_asset.Name}。\n只修改当前{KindLabel} Bundle，不修改游戏 DLL。操作前会备份。\n\n" +
-            (_movie == null ? "" : TimingNotice(_movie.Timing, _sourceDuration) + "\n\n") + "继续？",
-            "替换" + KindLabel, MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
+            UiText.F($"将视频写入 {_asset.Name}。\n只修改当前{KindLabel} Bundle，不修改游戏 DLL。操作前会备份。\n\n") +
+            (_movie == null ? "" : TimingNotice(_movie.Timing, _sourceDuration) + "\n\n") + UiText.T("继续？"),
+            UiText.T("替换") + KindLabel, MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
             _movie != null ? MessageBoxDefaultButton.Button2 : MessageBoxDefaultButton.Button1) != DialogResult.OK) return;
         _operation = new CancellationTokenSource();
         SetBusy(true);
@@ -290,18 +291,18 @@ public sealed class SkillAnimationDialog : Form
             Replaced = true;
             Restored = false;
             _restore.Visible = true;
-            SetStatus($"已写入并回读校验 · {FrameCount} 帧 · {Path.GetFileName(_input)} · 游戏内效果待确认");
+            SetStatus(UiText.F($"已写入并回读校验 · {FrameCount} 帧 · {Path.GetFileName(_input)} · 游戏内效果待确认"));
         }
-        catch (OperationCanceledException) { SetStatus("已取消 · 未写入本次视频"); }
-        catch (Exception ex) { SetStatus("替换未完成：" + ex.Message); }
+        catch (OperationCanceledException) { SetStatus(UiText.T("已取消 · 未写入本次视频")); }
+        catch (Exception ex) { SetStatus(UiText.T("替换未完成：") + ex.Message); }
         finally { _writing = false; _operation.Dispose(); _operation = null; SetBusy(false); }
     }
 
     private async Task RestoreAsync()
     {
         if (_operation != null) return;
-        if (MessageBox.Show(this, "将当前整个" + KindLabel + " Bundle 恢复到本工具首次备份的版本。继续？",
-            "还原当前资源包", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+        if (MessageBox.Show(this, UiText.T("将当前整个") + KindLabel + UiText.T(" Bundle 恢复到本工具首次备份的版本。继续？"),
+            UiText.T("还原当前资源包"), MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
         _operation = new CancellationTokenSource();
         _writing = true;
         SetBusy(true);
@@ -310,18 +311,18 @@ public sealed class SkillAnimationDialog : Form
         {
             PortraitReplacement.EnsureGameClosed();
             if (_movie != null && SkillMovieEngine.Hash(_asset.BundlePath) != _movie.BundleHash)
-                throw new IOException("资源包已更新，请重新打开窗口后再恢复。");
+                throw new IOException(UiText.T("资源包已更新，请重新打开窗口后再恢复。"));
             bool restored = _movie != null
                 ? await Task.Run(() => SkillMovieEngine.Restore(_asset, _movie, _backupDir))
                 : await Task.Run(() => new ModEngine().RestoreFromBackup(_asset.BundlePath, _backupDir, _asset.BundleName));
-            if (!restored) throw new IOException("没有找到当前资源包的备份。");
+            if (!restored) throw new IOException(UiText.T("没有找到当前资源包的备份。"));
             if (_movie != null) _movie = await SkillMovieEngine.InspectAsync(_asset.BundlePath, _asset.Name, _operation.Token);
             else await Task.Run(() => SkillAnimationEngine.Inspect(_asset.BundlePath, _asset.PathId, _asset.Name));
             Replaced = false;
             Restored = true;
-            SetStatus("已恢复当前" + KindLabel + "资源包");
+            SetStatus(UiText.T("已恢复当前") + KindLabel + UiText.T("资源包"));
         }
-        catch (Exception ex) { SetStatus("恢复未完成：" + ex.Message); }
+        catch (Exception ex) { SetStatus(UiText.T("恢复未完成：") + ex.Message); }
         finally { _writing = false; _operation.Dispose(); _operation = null; SetBusy(false); }
     }
 

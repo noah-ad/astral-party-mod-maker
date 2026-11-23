@@ -43,8 +43,8 @@ public static class PromptDialog
             FlowDirection = FlowDirection.RightToLeft, AutoSize = true,
             Dock = DockStyle.Fill, BackColor = Theme.Bg, Margin = new Padding(0)
         };
-        var ok = Theme.FlatButton("确定"); ok.MinimumSize = new Size(80, 0); ok.DialogResult = DialogResult.OK;
-        var cancel = Theme.FlatButton("取消"); cancel.MinimumSize = new Size(80, 0); cancel.DialogResult = DialogResult.Cancel;
+        var ok = Theme.FlatButton(UiText.T("确定")); ok.MinimumSize = new Size(80, 0); ok.DialogResult = DialogResult.OK;
+        var cancel = Theme.FlatButton(UiText.T("取消")); cancel.MinimumSize = new Size(80, 0); cancel.DialogResult = DialogResult.Cancel;
         cancel.Margin = new Padding(8, 0, 0, 0);
         btnPanel.Controls.Add(ok);
         btnPanel.Controls.Add(cancel);

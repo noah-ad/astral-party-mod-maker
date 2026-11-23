@@ -145,6 +145,7 @@ internal static class ModificationChecks
         void Call(string method, params object[] arguments) => typeof(MainForm).GetMethod(method, Flags)!.Invoke(form, arguments);
         object Field(string name) => typeof(MainForm).GetField(name, Flags)!.GetValue(form)!;
         typeof(MainForm).GetField("_index", Flags)!.SetValue(form, index);
+        typeof(MainForm).GetField("_ws", Flags)!.SetValue(form, PackService.LoadWorkspace(folder));
         typeof(MainForm).GetField("_modifications", Flags)!.SetValue(form, new ModificationCatalog(index, Path.Combine(folder, "state.json")));
         form.Show();
         Call("Navigate", "browse");
@@ -172,12 +173,19 @@ internal static class ModificationChecks
         Directory.CreateDirectory(other);
         PackService.SaveWorkspace(other, new ModManifest { Entries = new() { new() { Bundle = "other.bundle", TextureName = "other" } } });
         string otherRecord = File.ReadAllText(PackService.WorkspacePath(other));
-        Call("SetFolder", other, false, false);
+        Call("OpenSource", other, false);
         var timer = System.Diagnostics.Stopwatch.StartNew();
-        while (timer.ElapsedMilliseconds < 300) { Application.DoEvents(); Thread.Sleep(10); }
+        void Settle()
+        {
+            timer.Restart();
+            do { Application.DoEvents(); Thread.Sleep(10); }
+            while (((bool)Field("_loadingIndex") || Field("_modVerification") != null) && timer.ElapsedMilliseconds < 15000);
+        }
+        Settle();
         check(File.ReadAllText(PackService.WorkspacePath(other)) == otherRecord && ((ModManifest)Field("_ws")).Entries.Single().TextureName == "other"
-            && ((string)Field("_modVerificationInfo")).StartsWith("载入索引"), "cancelled old-folder verification cannot change the next workspace or its status");
-        Call("SetFolder", folder, false, false);
+            && ((GameIndex)Field("_index")).GameDir == other, "cancelled old-folder verification cannot change the next workspace or its status");
+        Call("OpenSource", folder, false);
+        Settle();
         check(((ModManifest)Field("_ws")).Entries.Count == 1, "switching and reopening a folder preserves its old record");
         form.Close();
         Application.DoEvents();

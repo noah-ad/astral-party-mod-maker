@@ -39,6 +39,7 @@ public class GameIndex
 {
     public string GameDir { get; set; }
     public string HotDir { get; set; }
+    public string GameCacheDir { get; set; }
     public string BuiltAt { get; set; }
     public string SourceStamp { get; set; }
     public string QuickSourceStamp { get; set; }
@@ -47,6 +48,7 @@ public class GameIndex
     public bool IncludeHotCache { get; set; }
     public bool Recursive { get; set; }
     public bool Lightweight { get; set; }
+    public bool IncludesAdvancedTypes { get; set; }
     public int LightweightTextureCount { get; set; }
     public Dictionary<string, List<string>> TextureNamesByBundle { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> BundlePathsByName { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -229,7 +231,6 @@ public class IndexService
 {
     private readonly ModEngine _engine = new();
     private const string CacheVersion = "v7";
-    private static readonly TimeSpan HotCacheTtl = TimeSpan.FromHours(12);
 
     public sealed class BundleScanEntry
     {
@@ -241,40 +242,68 @@ public class IndexService
     }
 
     public GameIndex Build(string gameDir, Action<int, int> progress = null, bool heroOnly = true,
-                           bool includeHotCache = false, bool recursive = false, bool includeAdvancedTypes = false)
+                           bool includeHotCache = false, bool recursive = false, bool includeAdvancedTypes = false,
+                           CancellationToken token = default)
     {
         gameDir = ResourceLocator.NormalizeGameDirectory(gameDir);
         var idx = new GameIndex
         {
             GameDir = gameDir,
-            HotDir = includeHotCache ? HotCacheDir() : "",
+            HotDir = includeHotCache ? UserCacheFor(gameDir) ?? "" : "",
+            GameCacheDir = includeHotCache ? RuntimeBundleLocator.GameDataCache(gameDir) : "",
             BuiltAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
             HeroOnly = heroOnly,
             IncludeHotCache = includeHotCache,
             Recursive = recursive,
+            IncludesAdvancedTypes = includeAdvancedTypes,
             Lightweight = false
         };
-        var bundles = EnumerateBundleEntries(gameDir, includeHotCache, recursive).ToList();
+        var bundles = EnumerateBundleEntries(gameDir, includeHotCache, recursive, token).ToList();
+        token.ThrowIfCancellationRequested();
+        progress?.Invoke(0, bundles.Count);
         idx.SourceStamp = ComputeStamp(bundles);
         idx.QuickSourceStamp = ComputeQuickSourceStamp(gameDir, includeHotCache, recursive);
-        int done = 0;
-        GameIndex previous = null;
-        try { previous = JsonSerializer.Deserialize<GameIndex>(File.ReadAllText(CachePath(gameDir, heroOnly, includeHotCache, recursive))); } catch { }
-        var oldRows = previous?.Items.GroupBy(x => x.Bundle).ToDictionary(g => g.Key, g => g.ToList());
-
-        foreach (var b in bundles)
+        var byStamp = new Dictionary<string, List<TexIndexEntry>>(StringComparer.OrdinalIgnoreCase);
+        void Reuse(string folder, bool hot, bool nested)
         {
-            string stamp = $"{b.Path}|{b.Length}|{b.LastWriteTicks}";
-            if (!includeAdvancedTypes && string.Equals(previous?.BundleStamps?.GetValueOrDefault(b.Name), stamp, StringComparison.OrdinalIgnoreCase))
+            token.ThrowIfCancellationRequested();
+            var cache = ReadCache(folder, heroOnly, hot, nested);
+            if (cache?.BundleStamps == null || cache.Items == null || cache.Lightweight
+                || (includeAdvancedTypes && !cache.IncludesAdvancedTypes)) return;
+            var oldRows = cache.Items.Where(row => row.Kind != ResourceKinds.SkillMovie)
+                .ToLookup(row => row.Bundle, StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in cache.BundleStamps)
+                byStamp.TryAdd(pair.Value, oldRows[pair.Key].ToList());
+        }
+        Reuse(gameDir, includeHotCache, recursive);
+        // Earlier versions could open the installed cache separately. Its unchanged headers are still useful.
+        if (includeHotCache && Directory.Exists(idx.GameCacheDir) && !RuntimeBundleLocator.SamePath(gameDir, idx.GameCacheDir))
+            Reuse(idx.GameCacheDir, false, true);
+
+        var rows = new List<TexIndexEntry>[bundles.Count];
+        var unknown = new List<int>();
+        for (int i = 0; i < bundles.Count; i++)
+        {
+            token.ThrowIfCancellationRequested();
+            var b = bundles[i];
+            if (byStamp.TryGetValue(BundleStamp(b), out var reused))
             {
-                if (oldRows.TryGetValue(b.Name, out var reused)) idx.Items.AddRange(reused);
-                idx.BundleStamps[b.Name] = stamp;
-                progress?.Invoke(++done, bundles.Count);
-                continue;
+                foreach (var entry in reused) { entry.Bundle = b.Name; entry.Source = b.Source; entry.BundlePath = b.Path; }
+                rows[i] = reused;
             }
+            else unknown.Add(i);
+        }
+        int done = bundles.Count - unknown.Count;
+        if (done > 0) progress?.Invoke(done, bundles.Count);
+        var options = new ParallelOptions { MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 1, 4), CancellationToken = token };
+        var progressLock = new object();
+        Parallel.ForEach(unknown, options, () => new ModEngine.BundleHeaderReader(_engine), (i, _, reader) =>
+        {
+            var b = bundles[i];
             try
             {
-                var assets = includeAdvancedTypes ? _engine.ListAssets(b.Path) : _engine.ListTextureHeaders(b.Path);
+                var entries = new List<TexIndexEntry>();
+                var assets = reader.Read(b.Path, includeAdvancedTypes);
                 foreach (var asset in assets)
                 {
                     if (heroOnly)
@@ -285,9 +314,7 @@ public class IndexService
                     }
 
                     var catId = ResourceCategories.Categorize(asset.Kind, asset.Name, asset.Width, asset.Height);
-                    if (asset.Kind == ResourceKinds.Texture)
-                        idx.AddTextureCategoryCount(catId);
-                    idx.Items.Add(new TexIndexEntry
+                    entries.Add(new TexIndexEntry
                     {
                         Bundle = b.Name,
                         BundlePath = b.Path,
@@ -302,131 +329,116 @@ public class IndexService
                         Height = asset.Height
                     });
                 }
-                idx.BundleStamps[b.Name] = stamp;
+                rows[i] = entries;
             }
-            catch { }
-
-            progress?.Invoke(++done, bundles.Count);
+            catch (Exception ex) when (ex is not (OperationCanceledException or OutOfMemoryException)) { }
+            lock (progressLock) progress?.Invoke(++done, bundles.Count);
+            return reader;
+        }, _ => { });
+        for (int i = 0; i < bundles.Count; i++)
+        {
+            if (rows[i] == null) continue;
+            idx.Items.AddRange(rows[i]);
+            idx.BundleStamps[bundles[i].Name] = BundleStamp(bundles[i]);
         }
+        token.ThrowIfCancellationRequested();
         ApplySkillOwnership(idx);
         return idx;
+    }
+
+    private static string BundleStamp(BundleScanEntry b) => $"{b.Path}|{b.Length}|{b.LastWriteTicks}";
+
+    private static GameIndex ReadCache(string gameDir, bool heroOnly, bool hot, bool recursive)
+    {
+        try
+        {
+            using var input = new FileStream(CachePath(gameDir, heroOnly, hot, recursive), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            return JsonSerializer.Deserialize<GameIndex>(input);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return null; }
     }
 
     public static IReadOnlyList<BundleScanEntry> EnumerateBundles(string gameDir, bool includeHotCache, bool recursive)
         => EnumerateBundleEntries(gameDir, includeHotCache, recursive).ToList();
 
-    private static IEnumerable<BundleScanEntry> EnumerateBundleEntries(string gameDir, bool includeHotCache, bool recursive)
+    private static IEnumerable<BundleScanEntry> EnumerateBundleEntries(string gameDir, bool includeHotCache, bool recursive, CancellationToken token = default)
     {
         gameDir = ResourceLocator.NormalizeGameDirectory(gameDir);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        BundleScanEntry Add(string logical, string path, string source, string prefix)
+        {
+            if (!paths.Add(Path.GetFullPath(path))) return null;
+            if (!seen.Add(logical))
+            {
+                logical = prefix + "/" + logical.Replace('\\', '/');
+                if (!seen.Add(logical))
+                {
+                    logical = prefix + "/" + Path.GetFileName(Path.GetDirectoryName(Path.GetDirectoryName(path))) + "/" + Path.GetFileName(logical);
+                    if (!seen.Add(logical)) return null;
+                }
+            }
+            return MakeBundleEntry(logical, path, source);
+        }
 
         if (includeHotCache)
         {
-            foreach (var f in EnumerateHotDataFilesCached())
+            foreach (var cache in new[] { (Root: UserCacheFor(gameDir), Source: "热更缓存", Prefix: "user-cache"),
+                (Root: RuntimeBundleLocator.GameDataCache(gameDir), Source: "游戏安装缓存", Prefix: "install-cache") })
             {
-                var logical = Path.GetFileName(Path.GetDirectoryName(f)) + ".bundle";
-                if (seen.Add(logical))
-                    yield return MakeBundleEntry(logical, f, "热更缓存");
+                foreach (var f in EnumerateHotDataFiles(cache.Root, token))
+                {
+                    token.ThrowIfCancellationRequested();
+                    string logical = Path.GetFileName(Path.GetDirectoryName(f)) + ".bundle";
+                    var entry = Add(logical, f, cache.Source, cache.Prefix);
+                    if (entry != null) yield return entry;
+                }
             }
         }
 
         if (!Directory.Exists(gameDir)) yield break;
 
-        foreach (var f in ResourceLocator.EnumerateResourceFiles(gameDir))
+        bool installationDirectory = RuntimeBundleLocator.UsesDataPath(gameDir);
+        foreach (var f in ResourceLocator.EnumerateResourceFiles(gameDir, token, recursive))
         {
-            if (!recursive && !ResourceLocator.IsWrappedData(f)
-                && !string.Equals(Path.GetDirectoryName(f), gameDir, StringComparison.OrdinalIgnoreCase))
-                continue;
-
-            var logical = ResourceLocator.RelativePath(gameDir, f);
-            if (seen.Add(logical))
-                yield return MakeBundleEntry(logical, f, ResourceLocator.IsWrappedData(f) ? "B服资源" : "基础包");
+            token.ThrowIfCancellationRequested();
+            var logical = Path.GetRelativePath(gameDir, f);
+            string source = installationDirectory ? "游戏安装缓存"
+                : ResourceLocator.IsWrappedData(f) ? "B服资源" : "基础包";
+            var entry = Add(logical, f, source, "base");
+            if (entry != null) yield return entry;
         }
     }
 
-    private sealed class HotDataCache
+    public static string SourceLabel(string source) => string.IsNullOrWhiteSpace(source) ? "资源目录"
+        : source.StartsWith("游戏安装缓存", StringComparison.Ordinal) ? "安装缓存"
+        : source?.StartsWith("热更缓存", StringComparison.Ordinal) == true ? "用户缓存" : source?.Split('/')[0] ?? "资源目录";
+
+    public static int SourcePriority(string source) => SourceLabel(source) switch
     {
-        public string HotDir { get; set; }
-        public long CreatedUtcTicks { get; set; }
-        public string DirectoryStamp { get; set; }
-        public List<string> DataFiles { get; set; } = new();
+        "安装缓存" => 0, "用户缓存" => 1, "B服资源" => 1, "基础包" => 2, _ => 3
+    };
+
+    private static IEnumerable<DirectoryInfo> HashFolders(string root)
+    {
+        if (!Directory.Exists(root)) return Enumerable.Empty<DirectoryInfo>();
+        return new DirectoryInfo(root).EnumerateDirectories("*", new EnumerationOptions
+        { IgnoreInaccessible = false, AttributesToSkip = FileAttributes.ReparsePoint })
+            .Where(dir => dir.Name.Length == 32 && dir.Name.All(Uri.IsHexDigit)).OrderBy(dir => dir.Name, StringComparer.OrdinalIgnoreCase);
     }
 
-    public static void ClearHotBundleCache()
+    private static IEnumerable<string> EnumerateHotDataFiles(string hot, CancellationToken token)
     {
-        try
+        foreach (var owner in HashFolders(hot))
         {
-            var p = HotDataCachePath();
-            if (File.Exists(p)) File.Delete(p);
-        }
-        catch { }
-    }
-
-    private static IEnumerable<string> EnumerateHotDataFilesCached()
-    {
-        var hot = HotCacheDir();
-        if (!Directory.Exists(hot)) yield break;
-
-        List<string> cached = TryLoadHotDataCache(hot);
-        if (cached == null)
-        {
-            cached = Directory.GetFiles(hot, "__data", SearchOption.AllDirectories).ToList();
-            TrySaveHotDataCache(hot, cached);
-        }
-
-        foreach (var f in cached)
-            yield return f;
-    }
-
-    private static List<string> TryLoadHotDataCache(string hotDir)
-    {
-        try
-        {
-            var p = HotDataCachePath();
-            if (!File.Exists(p)) return null;
-            var cache = JsonSerializer.Deserialize<HotDataCache>(File.ReadAllText(p));
-            if (cache?.DataFiles == null || cache.DataFiles.Count == 0) return null;
-            if (!string.Equals(cache.HotDir, hotDir, StringComparison.OrdinalIgnoreCase)) return null;
-            if (DateTime.UtcNow.Ticks - cache.CreatedUtcTicks > HotCacheTtl.Ticks) return null;
-            if (!string.Equals(cache.DirectoryStamp, HotDirectoryStamp(hotDir), StringComparison.Ordinal)) return null;
-
-            return cache.DataFiles.Take(8).Concat(cache.DataFiles.TakeLast(8)).All(File.Exists) ? cache.DataFiles : null;
-        }
-        catch { return null; }
-    }
-
-    private static void TrySaveHotDataCache(string hotDir, List<string> dataFiles)
-    {
-        try
-        {
-            var cache = new HotDataCache
+            token.ThrowIfCancellationRequested();
+            foreach (var version in HashFolders(owner.FullName))
             {
-                HotDir = hotDir,
-                CreatedUtcTicks = DateTime.UtcNow.Ticks,
-                DirectoryStamp = HotDirectoryStamp(hotDir),
-                DataFiles = dataFiles
-            };
-            File.WriteAllText(HotDataCachePath(), JsonSerializer.Serialize(cache));
+                token.ThrowIfCancellationRequested();
+                string path = Path.Combine(version.FullName, "__data");
+                if (File.Exists(path) && File.Exists(Path.Combine(version.FullName, "__info"))) yield return path;
+            }
         }
-        catch { }
-    }
-
-    private static string HotDataCachePath()
-    {
-        string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JixModMaker");
-        Directory.CreateDirectory(dir);
-        return Path.Combine(dir, "hot_data_files.json");
-    }
-
-    private static string HotDirectoryStamp(string hotDir)
-    {
-        var text = new StringBuilder();
-        foreach (string path in Directory.EnumerateDirectories(hotDir).OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
-        {
-            var info = new DirectoryInfo(path);
-            text.Append(info.Name).Append('|').Append(info.LastWriteTimeUtc.Ticks).Append('\n');
-        }
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())));
     }
 
     private static BundleScanEntry MakeBundleEntry(string logical, string path, string source)
@@ -442,15 +454,22 @@ public class IndexService
     {
         gameDir = ResourceLocator.NormalizeGameDirectory(gameDir);
         var text = new StringBuilder();
+        text.Append("cache-layout|4\n");
         AppendDirectory(text, "game", gameDir);
         text.Append("recursive|").Append(recursive).Append('\n');
         text.Append("hot|").Append(includeHotCache).Append('\n');
         if (includeHotCache)
         {
-            string hot = HotCacheDir();
+            string hot = UserCacheFor(gameDir);
             AppendDirectory(text, "hot-root", hot);
-            string catalogRoot = Directory.GetParent(hot)?.FullName;
-            if (!string.IsNullOrWhiteSpace(catalogRoot) && Directory.Exists(catalogRoot))
+            string installed = RuntimeBundleLocator.GameDataCache(gameDir);
+            AppendDirectory(text, "install-cache-root", installed);
+            foreach (var root in new[] { hot, installed }.Where(Directory.Exists).Distinct(StringComparer.OrdinalIgnoreCase))
+                foreach (var owner in HashFolders(root))
+                    text.Append(owner.Name).Append('|').Append(owner.LastWriteTimeUtc.Ticks).Append('\n');
+            foreach (string catalogRoot in new[] { string.IsNullOrWhiteSpace(hot) ? null : Directory.GetParent(hot)?.FullName,
+                string.IsNullOrWhiteSpace(installed) ? null : Directory.GetParent(installed)?.FullName,
+                Directory.GetParent(Path.GetFullPath(gameDir))?.FullName }.Where(Directory.Exists).Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 foreach (string path in Directory.EnumerateFiles(catalogRoot, "catalog*.json", SearchOption.TopDirectoryOnly)
                     .OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
@@ -484,13 +503,26 @@ public class IndexService
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString())));
     }
 
-    public static string HotCacheDir()
+    public static string HotCacheDir(GameEdition edition = GameEdition.China)
+        => UserCachePath(edition == GameEdition.International ? "AstralParty_INT" : "AstralParty_CN");
+
+    private static string UserCachePath(string product)
     {
         var profile = Environment.GetEnvironmentVariable("USERPROFILE");
         if (string.IsNullOrWhiteSpace(profile))
             profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return Path.Combine(profile, "AppData", "LocalLow", "feimo", "AstralParty_CN",
+        return Path.Combine(profile, "AppData", "LocalLow", "feimo", product,
             "com.unity.addressables", "AssetBundles");
+    }
+
+    public static string UserCacheFor(string gameDir)
+    {
+        if (string.IsNullOrWhiteSpace(gameDir)) return null;
+        string product = GameLocator.ProductOf(RuntimeBundleLocator.GameDataDirectory(gameDir));
+        if (product != null) return UserCachePath(product);
+        foreach (string candidate in new[] { HotCacheDir(), HotCacheDir(GameEdition.International) })
+            if (RuntimeBundleLocator.SamePath(gameDir, candidate)) return candidate;
+        return null;
     }
 
     public static string CachePath(string gameDir, bool heroOnly = true, bool includeHotCache = false, bool recursive = false)
@@ -504,23 +536,34 @@ public class IndexService
         return Path.Combine(dir, $"index_{CacheVersion}_{(heroOnly ? "hero" : "full")}_{mode}_{depth}_{h}.json");
     }
 
-    public void Save(GameIndex idx)
-        => File.WriteAllText(CachePath(idx.GameDir, idx.HeroOnly, idx.IncludeHotCache, idx.Recursive), JsonSerializer.Serialize(idx));
+    public void Save(GameIndex idx, CancellationToken token = default)
+    {
+        string path = CachePath(idx.GameDir, idx.HeroOnly, idx.IncludeHotCache, idx.Recursive);
+        string temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            using (var stream = File.Create(temp)) JsonSerializer.Serialize(stream, idx);
+            token.ThrowIfCancellationRequested();
+            File.Move(temp, path, true);
+        }
+        finally { File.Delete(temp); }
+    }
 
-    public GameIndex Load(string gameDir, bool heroOnly = true, bool includeHotCache = false, bool recursive = false)
+    public GameIndex Load(string gameDir, bool heroOnly = true, bool includeHotCache = false, bool recursive = false, CancellationToken token = default)
     {
         gameDir = ResourceLocator.NormalizeGameDirectory(gameDir);
-        var cached = TryLoadSavedIndex(gameDir, heroOnly, includeHotCache, recursive);
+        var cached = TryLoadSavedIndex(gameDir, heroOnly, includeHotCache, recursive, token);
         return cached;
     }
 
-    private GameIndex TryLoadSavedIndex(string gameDir, bool heroOnly, bool includeHotCache, bool recursive)
+    private GameIndex TryLoadSavedIndex(string gameDir, bool heroOnly, bool includeHotCache, bool recursive, CancellationToken token)
     {
         var p = CachePath(gameDir, heroOnly, includeHotCache, recursive);
         if (!File.Exists(p)) return null;
         try
         {
-            var idx = JsonSerializer.Deserialize<GameIndex>(File.ReadAllText(p));
+            var idx = ReadCache(gameDir, heroOnly, includeHotCache, recursive);
+            token.ThrowIfCancellationRequested();
             if (idx == null) return null;
             if ((idx.Lightweight ? idx.LightweightTextureCount == 0 : idx.Items.Count == 0)
                 && ResourceLocator.HasWrappedResources(gameDir))
@@ -537,19 +580,21 @@ public class IndexService
             else
             {
                 sourceMatches = string.Equals(idx.SourceStamp,
-                    ComputeSourceStamp(gameDir, includeHotCache, recursive), StringComparison.OrdinalIgnoreCase);
+                    ComputeStamp(EnumerateBundleEntries(gameDir, includeHotCache, recursive, token)), StringComparison.OrdinalIgnoreCase);
                 if (sourceMatches && includeHotCache && !recursive)
                 {
                     idx.QuickSourceStamp = quickStamp;
-                    try { File.WriteAllText(p, JsonSerializer.Serialize(idx)); } catch { }
+                    try { Save(idx, token); } catch (IOException) { } catch (UnauthorizedAccessException) { }
                 }
             }
             if (validShape && sourceMatches)
             {
+                token.ThrowIfCancellationRequested();
                 ApplySkillOwnership(idx);
                 return idx;
             }
         }
+        catch (OperationCanceledException) { throw; }
         catch { }
         return null;
     }
@@ -574,7 +619,8 @@ public class IndexService
             var idx = new GameIndex
             {
                 GameDir = gameDir,
-                HotDir = includeHotCache ? HotCacheDir() : "",
+                HotDir = includeHotCache ? UserCacheFor(gameDir) ?? "" : "",
+                GameCacheDir = includeHotCache ? RuntimeBundleLocator.GameDataCache(gameDir) : "",
                 BuiltAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " / 参考轻索引",
                 SourceStamp = ComputeStamp(bundles),
                 QuickSourceStamp = ComputeQuickSourceStamp(gameDir, includeHotCache, recursive),
@@ -665,7 +711,7 @@ public class IndexService
         IEnumerable<string> bundleNames = idx.Lightweight
             ? idx.TextureNamesByBundle?.Keys ?? Enumerable.Empty<string>()
             : idx.Items?.Select(item => item.Bundle).Distinct(StringComparer.OrdinalIgnoreCase) ?? Enumerable.Empty<string>();
-        var owners = CatalogOwnership.Load(idx.GameDir, bundleNames);
+        var owners = CatalogOwnership.Load(idx.GameDir, bundleNames, idx.IncludeHotCache);
         if (owners.Count > 0) idx.CharacterOwnersByBundle = owners;
         idx.CharacterOwnersByBundle ??= new(StringComparer.OrdinalIgnoreCase);
 
@@ -737,7 +783,8 @@ public class IndexService
                 Kind = ResourceKinds.SkillMovie, Format = "USM / 点选解析",
                 CategoryId = ResourceCategories.CharacterId,
                 CategoryLabel = ResourceCategories.Label(ResourceKinds.Texture, ResourceCategories.CharacterId),
-                Source = ResourceLocator.IsWrappedData(path) ? "热更缓存" : "基础包"
+                Source = !string.IsNullOrWhiteSpace(idx.GameCacheDir) && path.StartsWith(Path.TrimEndingDirectorySeparator(idx.GameCacheDir) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                    ? "游戏安装缓存" : ResourceLocator.IsWrappedData(path) ? "热更缓存" : "基础包"
             });
         }
     }

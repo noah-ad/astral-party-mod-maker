@@ -234,49 +234,12 @@ public static class PackService
         public int Applied;
         public int Missing;
         public int Targets;
+        public int VariantTargets;
+        public int Failed;
         public string PackName;
         public string Author;
-    }
-
-    /// <summary>把图包应用到 targetFolder。按 bundle+pathId 精确定位写回, 并更新工作区清单。</summary>
-    public static ImportResult Import(string packPath, string targetFolder, ModEngine engine,
-                                      string backupDir, ModManifest workspace)
-    {
-        using var zip = ZipFile.OpenRead(packPath);
-        var manEntry = zip.GetEntry("manifest.json")
-            ?? throw new Exception("图包损坏: 缺少 manifest.json");
-
-        ModManifest m;
-        using (var s = manEntry.Open())
-        using (var r = new StreamReader(s))
-            m = JsonSerializer.Deserialize<ModManifest>(r.ReadToEnd()) ?? new();
-
-        var res = new ImportResult { PackName = m.Name, Author = m.Author };
-        foreach (var e in m.Entries)
-        {
-            try
-            {
-                string bundlePath = Path.Combine(targetFolder, e.Bundle);
-                var imgEntry = FindImageEntry(zip, e.Image);
-                if (!File.Exists(bundlePath) || imgEntry == null)
-                { res.Missing++; continue; }
-
-                byte[] png;
-                using (var s = imgEntry.Open())
-                using (var ms = new MemoryStream()) { s.CopyTo(ms); png = ms.ToArray(); }
-
-                engine.ReplaceInPlaceFromBytes(bundlePath, e.PathId, png, backupDir);
-                Upsert(workspace, new ModEntry
-                {
-                    Bundle = e.Bundle, PathId = e.PathId, TextureName = e.TextureName,
-                    Width = e.Width, Height = e.Height, Label = e.Label
-                });
-                res.Applied++;
-                res.Targets++;
-            }
-            catch { res.Missing++; }
-        }
-        return res;
+        public List<(string Name, string Error)> Issues { get; } = new();
+        public HashSet<string> WrittenBundles { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>读图包格式版本 (1 或 2); 读不到返回 1。</summary>
@@ -333,87 +296,107 @@ public static class PackService
             w.Write(JsonSerializer.Serialize(man, J));
     }
 
-    /// <summary>
-    /// 导入 v2 图包: 按贴图名在 gameIndex 里实时匹配当前游戏的 bundle+pathId 并写回。
-    /// 同名贴图(多 bundle)全部写回。
-    /// </summary>
     public static ImportResult ImportV2(string packPath, GameIndex gameIndex, string gameDir,
-                                        ModEngine engine, string backupDir, ModManifest workspace)
+        ModEngine engine, string backupDir, ModManifest workspace, Action<int, int> progress = null)
     {
-        gameDir = ResourceLocator.NormalizeGameDirectory(gameDir);
-        var byName = BuildTextureTargetMap(gameIndex);
+        ArgumentNullException.ThrowIfNull(gameIndex);
+        if (!RuntimeBundleLocator.SamePath(gameDir, gameIndex.GameDir))
+            throw new InvalidOperationException("图包导入目标与当前索引不一致。");
 
         using var zip = ZipFile.OpenRead(packPath);
-        var manEntry = zip.GetEntry("manifest.json") ?? throw new Exception("图包损坏: 缺少 manifest.json");
-        ModManifest m;
-        using (var s = manEntry.Open())
-        using (var r = new StreamReader(s))
-            m = JsonSerializer.Deserialize<ModManifest>(r.ReadToEnd()) ?? new();
+        var manifest = zip.GetEntry("manifest.json") ?? throw new InvalidDataException("图包损坏: 缺少 manifest.json");
+        using var input = manifest.Open();
+        var pack = JsonSerializer.Deserialize<ModManifest>(input, J);
+        if (pack?.Entries == null || pack.Entries.Any(entry => entry == null))
+            throw new InvalidDataException("图包的条目列表无效。");
 
-        var res = new ImportResult { PackName = m.Name, Author = m.Author };
-        foreach (var e in m.Entries)
+        var res = new ImportResult { PackName = pack.Name, Author = pack.Author };
+        var byName = BuildTextureTargetMap(gameIndex);
+        var byBundle = gameIndex.Items.Where(row => row.Kind == ResourceKinds.Texture)
+            .ToLookup(row => BundleKey(row.Bundle), StringComparer.OrdinalIgnoreCase);
+        var roots = new[] { gameDir, gameIndex.IncludeHotCache ? IndexService.UserCacheFor(gameDir) : null,
+            gameIndex.IncludeHotCache ? RuntimeBundleLocator.GameDataCache(gameDir) : null }
+            .Where(Directory.Exists).Select(Path.GetFullPath).ToArray();
+        var explicitNames = pack.Entries.Select(entry => entry.TextureName).Where(name => !string.IsNullOrWhiteSpace(name))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        bool matchVariants = GameLocator.EditionOf(gameDir) == GameEdition.International;
+        var written = new HashSet<(string Bundle, long Id)>();
+        progress?.Invoke(0, pack.Entries.Count);
+        for (int i = 0; i < pack.Entries.Count; i++)
         {
+            var entry = pack.Entries[i];
+            string name = entry.TextureName?.Trim(), label = string.IsNullOrEmpty(name) ? entry.Bundle : name;
             try
             {
-                var imgEntry = FindImageEntry(zip, e.Image);
-                List<TexIndexEntry> targets;
-                if (!string.IsNullOrWhiteSpace(e.TextureName) && byName.TryGetValue(e.TextureName, out var namedTargets))
-                    targets = namedTargets;
-                else if (!string.IsNullOrWhiteSpace(e.Bundle))
-                    targets = gameIndex.Items.Where(candidate => candidate.PathId == e.PathId
-                        && string.Equals(candidate.Bundle, e.Bundle, StringComparison.OrdinalIgnoreCase)).ToList();
-                else
-                    targets = new List<TexIndexEntry>();
-
-                targets = targets
-                    .GroupBy(target => $"{target.Bundle}\0{target.PathId}", StringComparer.OrdinalIgnoreCase)
-                    .Select(group => group.First())
-                    .ToList();
-                if (imgEntry == null || targets.Count == 0)
-                { res.Missing++; continue; }
-
-                byte[] png;
-                using (var s = imgEntry.Open())
-                using (var ms = new MemoryStream()) { s.CopyTo(ms); png = ms.ToArray(); }
-
-                bool any = false;
-                foreach (var t in targets)
+                var targets = new List<(TexIndexEntry Asset, bool Variant)>();
+                if (!string.IsNullOrEmpty(name))
                 {
-                    string bundlePath = !string.IsNullOrWhiteSpace(t.BundlePath)
-                        ? t.BundlePath
-                        : Path.Combine(gameDir, t.Bundle);
-                    if (!File.Exists(bundlePath)) continue;
-                    long pathId = t.PathId;
-                    int width = t.Width;
-                    int height = t.Height;
-                    if (pathId == 0)
-                    {
-                        var hydrated = engine.FindTextureByName(bundlePath, e.TextureName);
-                        if (hydrated == null) continue;
-                        pathId = hydrated.PathId;
-                        width = hydrated.Width;
-                        height = hydrated.Height;
-                    }
+                    if (byName.TryGetValue(name, out var exact)) targets.AddRange(exact.Select(asset => (asset, false)));
+                    if (matchVariants && Counterpart(name) is { } alias && !explicitNames.Contains(alias)
+                        && byName.TryGetValue(alias, out var other))
+                        targets.AddRange(other.Select(asset => (asset, true)));
+                }
+                else if (!string.IsNullOrWhiteSpace(entry.Bundle) && entry.PathId != 0)
+                    targets.AddRange(byBundle[BundleKey(entry.Bundle)].Where(asset => asset.PathId == entry.PathId)
+                        .Select(asset => (asset, false)));
+
+                if (targets.Count == 0) { res.Missing++; res.Issues.Add((label, null)); continue; }
+                var image = FindImageEntry(zip, entry.Image) ?? throw new InvalidDataException("图包缺少图片：" + entry.Image);
+                byte[] png;
+                using (var source = image.Open())
+                using (var buffer = new MemoryStream()) { source.CopyTo(buffer); png = buffer.ToArray(); }
+                bool applied = false;
+                foreach (var (asset, variant) in targets)
+                {
                     try
                     {
-                        engine.ReplaceInPlaceFromBytes(bundlePath, pathId, png, backupDir, t.Bundle);
+                        string target = Path.GetFullPath(string.IsNullOrWhiteSpace(asset.BundlePath)
+                            ? Path.Combine(gameDir, asset.Bundle) : asset.BundlePath);
+                        if (!roots.Any(root => IsInside(root, target)) || !File.Exists(target))
+                            throw new FileNotFoundException("当前索引中的资源已不存在，请刷新索引。", target);
+                        long id = asset.PathId;
+                        if (id == 0)
+                            id = engine.FindTextureByName(target, asset.Name)?.PathId
+                                ?? throw new InvalidDataException("资源包里找不到贴图：" + asset.Name);
+                        var key = (target.ToUpperInvariant(), id);
+                        if (written.Contains(key)) continue;
+
+                        engine.ReplaceInPlaceFromBytes(target, id, png, backupDir, asset.Bundle, asset.Name);
+                        written.Add(key);
                         Upsert(workspace, new ModEntry
                         {
-                            Bundle = t.Bundle, PathId = pathId, TextureName = e.TextureName,
-                            Width = e.Width > 0 ? e.Width : width,
-                            Height = e.Height > 0 ? e.Height : height,
-                            Label = e.Label
+                            Bundle = asset.Bundle, PathId = id, TextureName = asset.Name,
+                            Width = entry.Width > 0 ? entry.Width : asset.Width,
+                            Height = entry.Height > 0 ? entry.Height : asset.Height,
+                            Label = entry.Label
                         });
-                        any = true;
+                        res.WrittenBundles.Add(target);
                         res.Targets++;
+                        if (variant) res.VariantTargets++;
+                        applied = true;
                     }
-                    catch { }
+                    catch (Exception ex) when (ex is not OutOfMemoryException)
+                    { res.Failed++; res.Issues.Add((asset.Name, ex.Message)); }
                 }
-                if (any) res.Applied++; else res.Missing++;
+                if (applied) res.Applied++;
             }
-            catch { res.Missing++; }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            { res.Failed++; res.Issues.Add((label, ex.Message)); }
+            finally { progress?.Invoke(i + 1, pack.Entries.Count); }
         }
         return res;
+    }
+
+    private static bool IsInside(string root, string file)
+    {
+        string relative = Path.GetRelativePath(root, file);
+        return !Path.IsPathRooted(relative) && relative != ".." && !relative.StartsWith(".." + Path.DirectorySeparatorChar);
+    }
+
+    private static string Counterpart(string name)
+    {
+        if (!name.StartsWith("UT_", StringComparison.OrdinalIgnoreCase)) return null;
+        return name.EndsWith("_sfw", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name + "_sfw";
     }
 
     private static ZipArchiveEntry FindImageEntry(ZipArchive zip, string imagePath)

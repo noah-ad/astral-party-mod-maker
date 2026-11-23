@@ -34,7 +34,7 @@ public sealed class ModificationCatalog
         _byBundle = _assets.Where(asset => !string.IsNullOrWhiteSpace(asset.Bundle))
             .GroupBy(asset => PackService.BundleKey(asset.Bundle), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
-        _backupDirs = new[] { index.GameDir, index.HotDir }.Where(Directory.Exists)
+        _backupDirs = new[] { index.GameDir, index.HotDir, index.GameCacheDir }.Where(Directory.Exists)
             .Select(root => Path.Combine(Path.GetFullPath(root), "_原始备份")).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         _cachePath = cachePath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JixModMaker",
             "mod-state-v1-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(index.GameDir).ToLowerInvariant())))[..12] + ".json");
@@ -159,6 +159,7 @@ public sealed class ModificationCatalog
         var recovered = new List<ModEntry>();
         var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         int verified = 0, reused = 0, failed = 0, done = 0;
+        progress?.Invoke(0, groups.Count);
         var engine = new ModEngine();
         foreach (var group in groups)
         {
@@ -226,7 +227,7 @@ public sealed class ModificationCatalog
             File.WriteAllText(temporary, JsonSerializer.Serialize(_states));
             File.Move(temporary, _cachePath, true);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { cacheNotice = "核验缓存未保存：" + ex.Message; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { cacheNotice = UiText.T("核验缓存未保存：") + ex.Message; }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
         return new(recovered, verified, reused, failed, cacheNotice) { Errors = errors };
     }

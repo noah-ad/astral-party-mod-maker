@@ -79,15 +79,15 @@ public static class VideoRuntime
             {
                 string archive = Path.Combine(CacheRoot, "downloads", component.Sha256 + ".zip");
                 await DownloadAsync(client, component, archive, progress, token);
-                progress?.Report("正在解压 " + component.Name + "...");
+                progress?.Report(UiText.T("正在解压 ") + component.Name + "...");
                 await Task.Run(() => ExtractArchive(archive, Path.Combine(staging, component.Directory), token), token);
             }
-            progress?.Report("正在验证视频编码和 USM 封装组件...");
+            progress?.Report(UiText.T("正在验证视频编码和 USM 封装组件..."));
             await ValidateAsync(staging, token);
             await File.WriteAllTextAsync(Path.Combine(staging, "ready.txt"), RuntimeVersion, token);
             token.ThrowIfCancellationRequested();
             await Task.Run(() => CommitInstall(staging, InstalledRoot));
-            progress?.Report("视频组件已就绪");
+            progress?.Report(UiText.T("视频组件已就绪"));
         }
         finally
         {
@@ -102,7 +102,7 @@ public static class VideoRuntime
         token.ThrowIfCancellationRequested();
         if (File.Exists(destination) && await MatchesAsync(destination, component, token))
         {
-            progress?.Report(component.Name + " 已下载并校验");
+            progress?.Report(component.Name + UiText.T(" 已下载并校验"));
             return;
         }
         var uri = new Uri(component.Url);
@@ -139,7 +139,7 @@ public static class VideoRuntime
                     if (percent != previous)
                     {
                         previous = percent;
-                        progress?.Report($"正在下载 {component.Name} · {percent}% · {total / 1048576d:0.0} / {component.Size / 1048576d:0.0} MB");
+                        progress?.Report(UiText.F($"正在下载 {component.Name} · {percent}% · {total / 1048576d:0.0} / {component.Size / 1048576d:0.0} MB"));
                     }
                 }
                 if (total != component.Size || !Convert.ToHexString(hash.GetHashAndReset()).Equals(component.Sha256, StringComparison.OrdinalIgnoreCase))

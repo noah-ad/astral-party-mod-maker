@@ -10,15 +10,9 @@ public static class ResourceLocator
         {
             for (var current = new DirectoryInfo(Path.GetFullPath(path)); current != null; current = current.Parent)
             {
-                if (File.Exists(Path.Combine(current.FullName, "__info"))
-                    && string.Equals(current.Parent?.Name, "AssetBundles", StringComparison.OrdinalIgnoreCase))
-                    return current.Parent.FullName;
-
                 if (string.Equals(current.Name, "AssetBundles", StringComparison.OrdinalIgnoreCase)
-                    && (File.Exists(Path.Combine(current.FullName, "__info"))
-                        || Directory.EnumerateDirectories(current.FullName)
-                            .Take(32)
-                            .Any(child => File.Exists(Path.Combine(child, "__info")))))
+                    && (string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)), current.FullName, StringComparison.OrdinalIgnoreCase)
+                        || File.Exists(Path.Combine(path, "__info"))))
                     return current.FullName;
             }
         }
@@ -41,16 +35,29 @@ public static class ResourceLocator
         catch { return false; }
     }
 
-    public static List<string> EnumerateResourceFiles(string root)
+    public static List<string> EnumerateResourceFiles(string root, CancellationToken token = default, bool nestedBundles = true)
     {
         root = NormalizeGameDirectory(root);
         if (!Directory.Exists(root)) return new();
 
-        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var path in Directory.EnumerateFiles(root, "*.bundle", SearchOption.AllDirectories))
-            if (!IsBackupPath(root, path)) result.Add(path);
-        foreach (var path in Directory.EnumerateFiles(root, "__data", SearchOption.AllDirectories))
-            if (IsWrappedData(path) && !IsBackupPath(root, path)) result.Add(path);
+        var result = new List<string>();
+        var dirs = new Stack<DirectoryInfo>();
+        dirs.Push(new DirectoryInfo(root));
+        var options = new EnumerationOptions { IgnoreInaccessible = false, AttributesToSkip = FileAttributes.ReparsePoint };
+        while (dirs.TryPop(out var dir))
+        foreach (var item in dir.EnumerateFileSystemInfos("*", options))
+        {
+            token.ThrowIfCancellationRequested();
+            if (item is DirectoryInfo child)
+            {
+                if (!child.Name.Equals("_原始备份", StringComparison.OrdinalIgnoreCase)
+                    && (nestedBundles || !dir.Name.Equals("StandaloneWindows64", StringComparison.OrdinalIgnoreCase)))
+                    dirs.Push(child);
+            }
+            else if ((nestedBundles || string.Equals(dir.FullName, root, StringComparison.OrdinalIgnoreCase))
+                && item.Extension.Equals(".bundle", StringComparison.OrdinalIgnoreCase) || IsWrappedData(item.FullName))
+                result.Add(item.FullName);
+        }
         return result.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
@@ -81,10 +88,4 @@ public static class ResourceLocator
         return Path.Combine(backupDir, "__wrapped__", relative);
     }
 
-    private static bool IsBackupPath(string root, string path)
-    {
-        var relative = Path.GetRelativePath(root, path);
-        return relative.StartsWith("_原始备份" + Path.DirectorySeparatorChar,
-            StringComparison.OrdinalIgnoreCase);
-    }
 }
